@@ -1,7 +1,5 @@
-/// <reference types="vite/client" />
 import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
-import appCss from '../styles/app.css?url'
 
 export const Route = createRootRoute({
   head: () => ({
@@ -11,12 +9,10 @@ export const Route = createRootRoute({
       { title: 'Peitho — Speak so they listen.' },
       {
         name: 'description',
-        content:
-          'A speaking gym for precise, evidence-backed feedback on your spoken English.',
+        content: 'A speaking gym for precise, evidence-backed feedback on your spoken English.',
       },
       { name: 'theme-color', content: '#F6F4EF' },
     ],
-    links: [{ rel: 'stylesheet', href: appCss }],
   }),
   shellComponent: RootDocument,
 })
