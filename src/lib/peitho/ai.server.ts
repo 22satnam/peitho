@@ -139,12 +139,9 @@ async function geminiGenerateContent(
   }
   if (schema) {
     body.generationConfig = {
-      responseFormat: {
-        text: {
-          mimeType: 'application/json',
-          schema,
-        },
-      },
+      responseMimeType: 'application/json',
+      responseJsonSchema: schema,
+      temperature: 0.2,
     }
   }
   return fetch(endpoint, {
@@ -152,6 +149,90 @@ async function geminiGenerateContent(
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
     body: JSON.stringify(body),
   })
+}
+
+type GeminiUploadedFile = {
+  name: string
+  uri: string
+  mimeType: string
+  state?: string
+}
+
+async function uploadAudioToGemini(key: string, audio: Blob): Promise<GeminiUploadedFile> {
+  const mimeType = audio.type || 'audio/webm'
+  const start = await fetch('https://generativelanguage.googleapis.com/upload/v1beta/files', {
+    method: 'POST',
+    headers: {
+      'x-goog-api-key': key,
+      'X-Goog-Upload-Protocol': 'resumable',
+      'X-Goog-Upload-Command': 'start',
+      'X-Goog-Upload-Header-Content-Length': String(audio.size),
+      'X-Goog-Upload-Header-Content-Type': mimeType,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ file: { display_name: 'peitho-session-audio' } }),
+  })
+
+  if (!start.ok) {
+    throw new Error(`Gemini file upload start failed (${start.status}): ${(await start.text()).slice(0, 500)}`)
+  }
+
+  const uploadUrl = start.headers.get('x-goog-upload-url')
+  if (!uploadUrl) throw new Error('Gemini file upload did not return an upload URL')
+
+  const bytes = await audio.arrayBuffer()
+  const upload = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Length': String(audio.size),
+      'Content-Type': mimeType,
+      'X-Goog-Upload-Offset': '0',
+      'X-Goog-Upload-Command': 'upload, finalize',
+    },
+    body: bytes,
+  })
+
+  if (!upload.ok) {
+    throw new Error(`Gemini file upload failed (${upload.status}): ${(await upload.text()).slice(0, 500)}`)
+  }
+
+  const payload: any = await upload.json()
+  let file = payload?.file
+  if (!file?.name || !file?.uri) throw new Error('Gemini file upload returned no usable file URI')
+
+  // Audio is usually ready immediately, but wait briefly if Google reports PROCESSING.
+  for (let attempt = 0; String(file.state || '').toUpperCase() === 'PROCESSING' && attempt < 10; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 500))
+    const metadata = await fetch(`https://generativelanguage.googleapis.com/v1beta/${file.name}`, {
+      headers: { 'x-goog-api-key': key },
+    })
+    if (!metadata.ok) break
+    const metadataPayload: any = await metadata.json()
+    if (metadataPayload?.file) file = metadataPayload.file
+  }
+
+  if (String(file.state || '').toUpperCase() === 'FAILED') {
+    throw new Error('Gemini reported that the uploaded audio could not be processed')
+  }
+
+  return {
+    name: String(file.name),
+    uri: String(file.uri),
+    mimeType: String(file.mimeType || file.mime_type || mimeType),
+    state: file.state ? String(file.state) : undefined,
+  }
+}
+
+async function deleteGeminiFile(key: string, name: string) {
+  if (!name.startsWith('files/')) return
+  try {
+    await fetch(`https://generativelanguage.googleapis.com/v1beta/${name}`, {
+      method: 'DELETE',
+      headers: { 'x-goog-api-key': key },
+    })
+  } catch {
+    // Files expire automatically; deletion is best-effort cleanup.
+  }
 }
 
 export async function transcribeWithGroq(audio: Blob, fileName = 'session.webm'): Promise<TranscriptionResult> {
@@ -203,43 +284,33 @@ export async function analyzeWithGemini(input: {
   if (!key) throw new Error('GEMINI_API_KEY is not configured')
 
   const prompt = analysisPrompt({ ...input, hasAudio: Boolean(input.audio) })
-  const parts: Array<Record<string, unknown>> = [{ text: prompt }]
+  let uploaded: GeminiUploadedFile | null = null
 
-  if (input.audio) {
-    const buffer = Buffer.from(await input.audio.arrayBuffer())
-    parts.push({
-      inlineData: {
-        mimeType: input.audio.type || 'audio/webm',
-        data: buffer.toString('base64'),
-      },
-    })
-  }
+  try {
+    const parts: Array<Record<string, unknown>> = [{ text: prompt }]
+    if (input.audio) {
+      uploaded = await uploadAudioToGemini(key, input.audio)
+      parts.push({
+        fileData: {
+          mimeType: uploaded.mimeType,
+          fileUri: uploaded.uri,
+        },
+      })
+    }
 
-  const structuredResponse = await geminiGenerateContent(key, parts, ANALYSIS_SCHEMA as unknown as Record<string, unknown>)
-  if (structuredResponse.ok) {
-    const payload = await structuredResponse.json()
+    const response = await geminiGenerateContent(key, parts, ANALYSIS_SCHEMA as unknown as Record<string, unknown>)
+    if (!response.ok) {
+      const detail = await response.text()
+      throw new Error(`Gemini GenerateContent failed (${response.status}): ${detail.slice(0, 700)}`)
+    }
+
+    const payload = await response.json()
     const text = extractGenerateContentText(payload)
     if (!text) throw new Error('Gemini GenerateContent returned no text output')
     return parseJsonText(text)
+  } finally {
+    if (uploaded) await deleteGeminiFile(key, uploaded.name)
   }
-
-  const structuredDetail = await structuredResponse.text()
-  const plainPrompt = `${prompt}\n\nReturn ONLY valid JSON with these top-level keys: grammar, l1_patterns, vocabulary, coherence, delivery, top_fixes, encouragement. grammar and l1_patterns are arrays. vocabulary, coherence and delivery each contain score (0-100) and note. top_fixes is exactly three objects with title, you_said and try. Do not use markdown.`
-  const plainParts: Array<Record<string, unknown>> = [{ text: plainPrompt }, ...parts.slice(1)]
-  const plainResponse = await geminiGenerateContent(key, plainParts)
-
-  if (!plainResponse.ok) {
-    const plainDetail = await plainResponse.text()
-    throw new Error(
-      `Gemini GenerateContent structured request failed (${structuredResponse.status}): ${structuredDetail.slice(0, 240)}; ` +
-      `plain audio request failed (${plainResponse.status}): ${plainDetail.slice(0, 240)}`,
-    )
-  }
-
-  const plainPayload = await plainResponse.json()
-  const plainText = extractGenerateContentText(plainPayload)
-  if (!plainText) throw new Error('Gemini GenerateContent plain audio request returned no text output')
-  return parseJsonText(plainText)
 }
 
 export async function analyzeWithGroqFallback(input: {
