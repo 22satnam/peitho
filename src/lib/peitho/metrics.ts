@@ -101,8 +101,13 @@ export function computeMetrics(input: {
 
 export function fluencyScore(metrics: PeithoMetrics) {
   let score = 100
-  score -= Math.min(40, metrics.fillersPerMin * 4.5)
+
+  // Fillers are the strongest deterministic fluency signal. Keep the curve useful
+  // across the full range instead of flattening extreme filler use at a 40-point loss.
+  score -= Math.min(65, metrics.fillersPerMin * 2.4)
   score -= Math.min(15, metrics.pauseCount * 3)
+
+  // 110–175 WPM is deliberately broad: Peitho should coach clarity, not force one pace.
   if (metrics.wpm < 110) score -= Math.min(15, (110 - metrics.wpm) * 0.4)
   if (metrics.wpm > 175) score -= Math.min(12, (metrics.wpm - 175) * 0.3)
   return Math.max(5, Math.round(score))
@@ -120,9 +125,12 @@ function clampScore(value: unknown, fallback = 60) {
 }
 
 export function scoreSession(metrics: PeithoMetrics, analysis: AnalysisShape) {
-  const issueCount = (analysis.grammar?.length ?? 0) + (analysis.l1_patterns?.length ?? 0)
+  // L1 transfer coaching is shown separately and is not automatically a grammar error.
+  // Counting it here double-penalizes the same spoken pattern and can misrepresent
+  // perfectly grammatical transfer features as grammar mistakes.
+  const grammarIssueCount = analysis.grammar?.length ?? 0
   const fluency = fluencyScore(metrics)
-  const grammar = grammarScore(metrics, issueCount)
+  const grammar = grammarScore(metrics, grammarIssueCount)
   const vocabulary = clampScore(analysis.vocabulary?.score)
   const coherence = clampScore(analysis.coherence?.score)
   const overall = Math.round(fluency * 0.35 + grammar * 0.3 + vocabulary * 0.15 + coherence * 0.2)
