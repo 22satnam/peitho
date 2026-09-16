@@ -13,11 +13,13 @@ export type TranscriptionResult = {
 
 export const ANALYSIS_SCHEMA = {
   type: 'object',
+  additionalProperties: false,
   properties: {
     grammar: {
       type: 'array', maxItems: 5,
       items: {
         type: 'object',
+        additionalProperties: false,
         properties: { quote: { type: 'string' }, issue: { type: 'string' }, fix: { type: 'string' } },
         required: ['quote', 'issue', 'fix'],
       },
@@ -26,22 +28,26 @@ export const ANALYSIS_SCHEMA = {
       type: 'array', maxItems: 3,
       items: {
         type: 'object',
+        additionalProperties: false,
         properties: { quote: { type: 'string' }, pattern: { type: 'string' }, fix: { type: 'string' } },
         required: ['quote', 'pattern', 'fix'],
       },
     },
     vocabulary: {
       type: 'object',
+      additionalProperties: false,
       properties: { score: { type: 'integer', minimum: 0, maximum: 100 }, note: { type: 'string' } },
       required: ['score', 'note'],
     },
     coherence: {
       type: 'object',
+      additionalProperties: false,
       properties: { score: { type: 'integer', minimum: 0, maximum: 100 }, note: { type: 'string' } },
       required: ['score', 'note'],
     },
     delivery: {
       type: 'object',
+      additionalProperties: false,
       properties: { score: { type: 'integer', minimum: 0, maximum: 100 }, note: { type: 'string' } },
       required: ['score', 'note'],
     },
@@ -49,6 +55,7 @@ export const ANALYSIS_SCHEMA = {
       type: 'array', minItems: 3, maxItems: 3,
       items: {
         type: 'object',
+        additionalProperties: false,
         properties: { title: { type: 'string' }, you_said: { type: 'string' }, try: { type: 'string' } },
         required: ['title', 'you_said', 'try'],
       },
@@ -102,13 +109,13 @@ TRANSCRIPT:
 """${input.transcript}"""
 
 Rules:
-- Every grammar quote and L1-pattern quote must be a verbatim substring of the transcript.
+- Every grammar quote and L1-pattern quote must be copied verbatim from the transcript, including the exact words and word order.
 - L1 transfer is a pattern, not a flaw. Name it respectfully and only when genuinely present.
-- grammar: at most 5 high-value issues; do not nitpick transcription punctuation.
-- l1_patterns: at most 3.
-- vocabulary: specific, based on actual word choices; score 0-100.
-- coherence: judge the answer against the topic and suggested points; score 0-100.
-- top_fixes: exactly 3. Each you_said must be a verbatim substring of the transcript. Each fix must be concrete and rehearsal-ready.
+- grammar: at most 5 high-value issues; do not nitpick transcription punctuation. Use an empty array only when there is genuinely no useful grammatical correction.
+- l1_patterns: at most 3. Use an empty array when there is no defensible transfer pattern.
+- vocabulary: always include both score and a specific note grounded in actual word choices.
+- coherence: always include both score and a specific note explaining how well the answer addresses the topic and develops its point.
+- top_fixes: exactly 3. Each you_said must be copied verbatim from the transcript. Each fix must be concrete and rehearsal-ready.
 - encouragement: one honest, specific sentence, no generic praise.
 - Do not invent words the speaker did not say.`
 }
@@ -210,9 +217,16 @@ export async function analyzeWithGroqFallback(input: {
     body: JSON.stringify({
       model: GROQ_FALLBACK_MODEL,
       temperature: 0.2,
-      response_format: { type: 'json_object' },
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          name: 'peitho_speech_analysis',
+          strict: true,
+          schema: ANALYSIS_SCHEMA,
+        },
+      },
       messages: [
-        { role: 'system', content: 'Return only valid JSON matching the requested Peitho analysis shape.' },
+        { role: 'system', content: 'Return evidence-backed spoken-English coaching that conforms exactly to the supplied JSON schema.' },
         { role: 'user', content: prompt },
       ],
     }),
