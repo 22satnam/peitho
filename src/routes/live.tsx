@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
-import LivePractice from '../LivePracticeV2'
+import UnifiedPractice from '../UnifiedPractice'
 
 export const Route = createFileRoute('/live')({
-  component: LivePractice,
+  component: UnifiedPractice,
 })
