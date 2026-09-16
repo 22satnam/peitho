@@ -3,6 +3,8 @@ import type { AnalysisShape, PeithoMetrics, WordTimestamp } from './metrics'
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash'
 const GROQ_STT_MODEL = process.env.GROQ_STT_MODEL || 'whisper-large-v3-turbo'
 const GROQ_FALLBACK_MODEL = process.env.GROQ_FALLBACK_MODEL || 'openai/gpt-oss-120b'
+const GEMINI_INTERACTIONS_URL = 'https://generativelanguage.googleapis.com/v1beta/interactions'
+const GEMINI_API_REVISION = '2026-05-20'
 
 export type TranscriptionResult = {
   text: string
@@ -70,6 +72,7 @@ function env(name: 'GROQ_API_KEY' | 'GEMINI_API_KEY') {
 }
 
 function extractGeminiText(payload: any) {
+  if (typeof payload?.output_text === 'string' && payload.output_text.trim()) return payload.output_text.trim()
   const steps = Array.isArray(payload?.steps) ? payload.steps : []
   const modelSteps = steps.filter((step: any) => step?.type === 'model_output')
   const texts: string[] = []
@@ -82,7 +85,11 @@ function extractGeminiText(payload: any) {
 }
 
 function parseJsonText(text: string) {
-  const cleaned = text.replace(/^```json\s*/i, '').replace(/```$/i, '').trim()
+  const cleaned = text
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/```$/i, '')
+    .trim()
   return JSON.parse(cleaned)
 }
 
@@ -94,7 +101,7 @@ function analysisPrompt(input: {
   hasAudio: boolean
 }) {
   const deliveryInstruction = input.hasAudio
-    ? 'You can hear the recording. Evaluate delivery from what you actually hear: pace, hesitation and pronunciation. Do not infer an accent defect.'
+    ? 'You can hear the recording. Evaluate delivery from what you actually hear: pace, hesitation, clarity and pronunciation. Do not infer an accent defect. delivery.score must reflect the actual audio.'
     : 'No audio is available in this degraded path. Set delivery.score to 0 and delivery.note to "Audio unavailable — delivery was not scored."'
 
   return `You are Peitho, a precise and respectful spoken-English coach. Review only evidence that is actually present in the speech. The transcript was produced by automatic speech recognition and can contain punctuation errors or occasional misheard words.
@@ -122,6 +129,22 @@ Rules:
 - top_fixes: exactly 3. Each you_said must be copied verbatim from the transcript. Prioritize the three most useful changes across fluency, grammar, vocabulary and coherence without presenting one problem as multiple categories.
 - encouragement: one honest, specific sentence, no generic praise.
 - Do not invent words the speaker did not say. If a phrase appears likely to be an ASR mistake or is semantically bizarre, do not build grammar/L1 criticism around it.`
+}
+
+function geminiHeaders(key: string) {
+  return {
+    'Content-Type': 'application/json',
+    'x-goog-api-key': key,
+    'Api-Revision': GEMINI_API_REVISION,
+  }
+}
+
+async function geminiPost(key: string, body: Record<string, unknown>) {
+  return fetch(GEMINI_INTERACTIONS_URL, {
+    method: 'POST',
+    headers: geminiHeaders(key),
+    body: JSON.stringify({ store: false, ...body }),
+  })
 }
 
 export async function transcribeWithGroq(audio: Blob, fileName = 'session.webm'): Promise<TranscriptionResult> {
@@ -184,25 +207,43 @@ export async function analyzeWithGemini(input: {
     })
   }
 
-  const response = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-    body: JSON.stringify({
-      model: GEMINI_MODEL,
-      input: interactionInput,
-      response_format: { type: 'text', mime_type: 'application/json', schema: ANALYSIS_SCHEMA },
-    }),
+  const structuredResponse = await geminiPost(key, {
+    model: GEMINI_MODEL,
+    input: interactionInput,
+    response_format: { type: 'text', mime_type: 'application/json', schema: ANALYSIS_SCHEMA },
   })
 
-  if (!response.ok) {
-    const detail = await response.text()
-    throw new Error(`Gemini analysis failed (${response.status}): ${detail.slice(0, 500)}`)
+  if (structuredResponse.ok) {
+    const payload = await structuredResponse.json()
+    const text = extractGeminiText(payload)
+    if (!text) throw new Error('Gemini structured analysis returned no text output')
+    return parseJsonText(text)
   }
 
-  const data = await response.json()
-  const text = extractGeminiText(data)
-  if (!text) throw new Error('Gemini returned no text output')
-  return parseJsonText(text)
+  const structuredDetail = await structuredResponse.text()
+
+  // Some Gemini projects/models reject a sufficiently complex response schema even
+  // though the same model accepts the audio input. Retry the exact audio without
+  // schema enforcement; Peitho still validates all evidence after this call.
+  const plainJsonPrompt = `${prompt}\n\nReturn ONLY a valid JSON object with these top-level keys: grammar, l1_patterns, vocabulary, coherence, delivery, top_fixes, encouragement. grammar and l1_patterns are arrays. vocabulary, coherence and delivery each have score (0-100) and note. top_fixes is exactly three objects with title, you_said and try. Do not wrap the JSON in markdown.`
+  const plainInput = [{ type: 'text', text: plainJsonPrompt }, ...interactionInput.slice(1)]
+  const plainResponse = await geminiPost(key, {
+    model: GEMINI_MODEL,
+    input: plainInput,
+  })
+
+  if (!plainResponse.ok) {
+    const plainDetail = await plainResponse.text()
+    throw new Error(
+      `Gemini structured analysis failed (${structuredResponse.status}): ${structuredDetail.slice(0, 240)}; ` +
+      `plain audio retry failed (${plainResponse.status}): ${plainDetail.slice(0, 240)}`,
+    )
+  }
+
+  const plainPayload = await plainResponse.json()
+  const plainText = extractGeminiText(plainPayload)
+  if (!plainText) throw new Error('Gemini plain audio retry returned no text output')
+  return parseJsonText(plainText)
 }
 
 export async function analyzeWithGroqFallback(input: {
@@ -254,14 +295,10 @@ export async function generateTextJson<T>(input: {
   const geminiKey = env('GEMINI_API_KEY')
   if (geminiKey) {
     try {
-      const response = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': geminiKey },
-        body: JSON.stringify({
-          model: GEMINI_MODEL,
-          input: input.prompt,
-          response_format: { type: 'text', mime_type: 'application/json', schema: input.schema },
-        }),
+      const response = await geminiPost(geminiKey, {
+        model: GEMINI_MODEL,
+        input: input.prompt,
+        response_format: { type: 'text', mime_type: 'application/json', schema: input.schema },
       })
       if (!response.ok) throw new Error(await response.text())
       const payload = await response.json()
