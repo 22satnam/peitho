@@ -3,18 +3,42 @@ import { analyzeWithGemini, analyzeWithGroqFallback, transcribeWithGroq } from '
 import { computeMetrics, scoreSession } from '../../lib/peitho/metrics'
 import { deterministicOnlyAnalysis, validateAnalysis } from '../../lib/peitho/validation'
 
+function normalizedAudioMime(fileName: string, reportedType: string) {
+  const extension = fileName.toLowerCase().split('.').pop() || ''
+  const byExtension: Record<string, string> = {
+    m4a: 'audio/m4a',
+    mp3: 'audio/mp3',
+    mpeg: 'audio/mpeg',
+    wav: 'audio/wav',
+    webm: 'audio/webm',
+    ogg: 'audio/ogg',
+    opus: 'audio/opus',
+    aac: 'audio/aac',
+    flac: 'audio/flac',
+    aiff: 'audio/aiff',
+    aif: 'audio/aiff',
+  }
+  const cleanReportedType = reportedType.toLowerCase().split(';')[0].trim()
+  const supportedReportedTypes = new Set(Object.values(byExtension))
+  if (supportedReportedTypes.has(cleanReportedType)) return cleanReportedType
+  return byExtension[extension] || 'audio/webm'
+}
+
 export const Route = createFileRoute('/api/analyze')({
   server: {
     handlers: {
       POST: async ({ request }) => {
         try {
           const form = await request.formData()
+          const fileName = String(form.get('fileName') || 'session.webm')
           const audioEntry = form.get('audio')
-          const audio = audioEntry instanceof Blob && audioEntry.size > 0 ? audioEntry : null
+          const rawAudio = audioEntry instanceof Blob && audioEntry.size > 0 ? audioEntry : null
+          const audio = rawAudio
+            ? new Blob([await rawAudio.arrayBuffer()], { type: normalizedAudioMime(fileName, rawAudio.type) })
+            : null
           const browserTranscript = String(form.get('transcript') || '').trim()
           const topicTitle = String(form.get('topicTitle') || 'Speaking practice').trim()
           const durationSec = Math.max(1, Number(form.get('durationSec')) || 1)
-          const fileName = String(form.get('fileName') || 'session.webm')
 
           let points: string[] = []
           let clientPausesMs: number[] = []
@@ -108,6 +132,7 @@ export const Route = createFileRoute('/api/analyze')({
               ...(process.env.NODE_ENV !== 'production'
                 ? {
                     diagnostics: {
+                      audioMimeType: audio?.type || null,
                       timestampedWords: wordTimestamps.length,
                       whisperSegments,
                       largestRawWordGapSec: Number(largestRawWordGapSec.toFixed(3)),
