@@ -97,7 +97,7 @@ function analysisPrompt(input: {
     ? 'You can hear the recording. Evaluate delivery from what you actually hear: pace, hesitation and pronunciation. Do not infer an accent defect.'
     : 'No audio is available in this degraded path. Set delivery.score to 0 and delivery.note to "Audio unavailable — delivery was not scored."'
 
-  return `You are Peitho, a precise and respectful spoken-English coach reviewing a practice answer by an Indian professional who may be Hindi-first.
+  return `You are Peitho, a precise and respectful spoken-English coach. Review only evidence that is actually present in the speech. The transcript was produced by automatic speech recognition and can contain punctuation errors or occasional misheard words.
 
 ${deliveryInstruction}
 
@@ -109,15 +109,19 @@ TRANSCRIPT:
 """${input.transcript}"""
 
 Rules:
-- Every grammar quote and L1-pattern quote must be copied verbatim from the transcript, including the exact words and word order.
-- L1 transfer is a pattern, not a flaw. Name it respectfully and only when genuinely present.
-- grammar: at most 5 high-value issues; do not nitpick transcription punctuation. Use an empty array only when there is genuinely no useful grammatical correction.
-- l1_patterns: at most 3. Use an empty array when there is no defensible transfer pattern.
-- vocabulary: always include both score and a specific note grounded in actual word choices.
-- coherence: always include both score and a specific note explaining how well the answer addresses the topic and develops its point.
-- top_fixes: exactly 3. Each you_said must be copied verbatim from the transcript. Each fix must be concrete and rehearsal-ready.
+- Every grammar quote and L1-pattern quote must be copied verbatim from the transcript, including exact words and word order.
+- Keep categories separate. Fillers, hesitation, repetition, pace and pauses are FLUENCY issues, not grammar or L1-transfer issues.
+- Grammar means a defensible spoken-English construction error. Do not report run-on sentences, comma splices, punctuation, capitalization, or sentence-boundary issues because ASR punctuation is not reliable.
+- Do not call a phrase a tense error when its verbs are grammatically compatible in context.
+- grammar: at most 5 high-value issues. Prefer fewer high-confidence findings over speculative ones. Use [] when there is no defensible correction.
+- L1 transfer must be a defensible structural or lexical transfer pattern. Never infer L1 transfer merely from nationality, accent, fillers such as "um", "uh" or "like", hesitation, repetition, pace, or one ambiguous awkward phrase. If uncertain, omit it. Prefer recurring evidence over a one-off phrase.
+- Do not say that generic English filler use is "typical Hindi-English transfer" or equivalent.
+- l1_patterns: at most 3, and [] is a good result when there is no high-confidence transfer evidence.
+- vocabulary: always include score and a specific note grounded in actual word choices. Do not double-penalize filler frequency here; fillers are already measured under fluency. You may mention repetition only when it materially limits lexical variety.
+- coherence: always include score and a specific note explaining whether the speaker answered the topic and connected claims, evidence and outcome.
+- top_fixes: exactly 3. Each you_said must be copied verbatim from the transcript. Prioritize the three most useful changes across fluency, grammar, vocabulary and coherence without presenting one problem as multiple categories.
 - encouragement: one honest, specific sentence, no generic praise.
-- Do not invent words the speaker did not say.`
+- Do not invent words the speaker did not say. If a phrase appears likely to be an ASR mistake or is semantically bizarre, do not build grammar/L1 criticism around it.`
 }
 
 export async function transcribeWithGroq(audio: Blob, fileName = 'session.webm'): Promise<TranscriptionResult> {
