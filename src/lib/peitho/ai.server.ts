@@ -3,8 +3,6 @@ import type { AnalysisShape, PeithoMetrics, WordTimestamp } from './metrics'
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash'
 const GROQ_STT_MODEL = process.env.GROQ_STT_MODEL || 'whisper-large-v3-turbo'
 const GROQ_FALLBACK_MODEL = process.env.GROQ_FALLBACK_MODEL || 'openai/gpt-oss-120b'
-const GEMINI_INTERACTIONS_URL = 'https://generativelanguage.googleapis.com/v1beta/interactions'
-const GEMINI_API_REVISION = '2026-05-20'
 
 export type TranscriptionResult = {
   text: string
@@ -71,19 +69,6 @@ function env(name: 'GROQ_API_KEY' | 'GEMINI_API_KEY') {
   return process.env[name]?.trim() || ''
 }
 
-function extractGeminiText(payload: any) {
-  if (typeof payload?.output_text === 'string' && payload.output_text.trim()) return payload.output_text.trim()
-  const steps = Array.isArray(payload?.steps) ? payload.steps : []
-  const modelSteps = steps.filter((step: any) => step?.type === 'model_output')
-  const texts: string[] = []
-  for (const step of modelSteps) {
-    for (const content of step?.content ?? []) {
-      if (content?.type === 'text' && typeof content.text === 'string') texts.push(content.text)
-    }
-  }
-  return texts.join('\n').trim()
-}
-
 function parseJsonText(text: string) {
   const cleaned = text
     .replace(/^```json\s*/i, '')
@@ -91,6 +76,18 @@ function parseJsonText(text: string) {
     .replace(/```$/i, '')
     .trim()
   return JSON.parse(cleaned)
+}
+
+function extractGenerateContentText(payload: any) {
+  const candidates = Array.isArray(payload?.candidates) ? payload.candidates : []
+  const texts: string[] = []
+  for (const candidate of candidates) {
+    const parts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : []
+    for (const part of parts) {
+      if (typeof part?.text === 'string') texts.push(part.text)
+    }
+  }
+  return texts.join('\n').trim()
 }
 
 function analysisPrompt(input: {
@@ -131,19 +128,29 @@ Rules:
 - Do not invent words the speaker did not say. If a phrase appears likely to be an ASR mistake or is semantically bizarre, do not build grammar/L1 criticism around it.`
 }
 
-function geminiHeaders(key: string) {
-  return {
-    'Content-Type': 'application/json',
-    'x-goog-api-key': key,
-    'Api-Revision': GEMINI_API_REVISION,
+async function geminiGenerateContent(
+  key: string,
+  parts: Array<Record<string, unknown>>,
+  schema?: Record<string, unknown>,
+) {
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`
+  const body: Record<string, unknown> = {
+    contents: [{ role: 'user', parts }],
   }
-}
-
-async function geminiPost(key: string, body: Record<string, unknown>) {
-  return fetch(GEMINI_INTERACTIONS_URL, {
+  if (schema) {
+    body.generationConfig = {
+      responseFormat: {
+        text: {
+          mimeType: 'application/json',
+          schema,
+        },
+      },
+    }
+  }
+  return fetch(endpoint, {
     method: 'POST',
-    headers: geminiHeaders(key),
-    body: JSON.stringify({ store: false, ...body }),
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+    body: JSON.stringify(body),
   })
 }
 
@@ -196,53 +203,42 @@ export async function analyzeWithGemini(input: {
   if (!key) throw new Error('GEMINI_API_KEY is not configured')
 
   const prompt = analysisPrompt({ ...input, hasAudio: Boolean(input.audio) })
-  const interactionInput: any[] = [{ type: 'text', text: prompt }]
+  const parts: Array<Record<string, unknown>> = [{ text: prompt }]
 
   if (input.audio) {
     const buffer = Buffer.from(await input.audio.arrayBuffer())
-    interactionInput.push({
-      type: 'audio',
-      data: buffer.toString('base64'),
-      mime_type: input.audio.type || 'audio/webm',
+    parts.push({
+      inlineData: {
+        mimeType: input.audio.type || 'audio/webm',
+        data: buffer.toString('base64'),
+      },
     })
   }
 
-  const structuredResponse = await geminiPost(key, {
-    model: GEMINI_MODEL,
-    input: interactionInput,
-    response_format: { type: 'text', mime_type: 'application/json', schema: ANALYSIS_SCHEMA },
-  })
-
+  const structuredResponse = await geminiGenerateContent(key, parts, ANALYSIS_SCHEMA as unknown as Record<string, unknown>)
   if (structuredResponse.ok) {
     const payload = await structuredResponse.json()
-    const text = extractGeminiText(payload)
-    if (!text) throw new Error('Gemini structured analysis returned no text output')
+    const text = extractGenerateContentText(payload)
+    if (!text) throw new Error('Gemini GenerateContent returned no text output')
     return parseJsonText(text)
   }
 
   const structuredDetail = await structuredResponse.text()
-
-  // Some Gemini projects/models reject a sufficiently complex response schema even
-  // though the same model accepts the audio input. Retry the exact audio without
-  // schema enforcement; Peitho still validates all evidence after this call.
-  const plainJsonPrompt = `${prompt}\n\nReturn ONLY a valid JSON object with these top-level keys: grammar, l1_patterns, vocabulary, coherence, delivery, top_fixes, encouragement. grammar and l1_patterns are arrays. vocabulary, coherence and delivery each have score (0-100) and note. top_fixes is exactly three objects with title, you_said and try. Do not wrap the JSON in markdown.`
-  const plainInput = [{ type: 'text', text: plainJsonPrompt }, ...interactionInput.slice(1)]
-  const plainResponse = await geminiPost(key, {
-    model: GEMINI_MODEL,
-    input: plainInput,
-  })
+  const plainPrompt = `${prompt}\n\nReturn ONLY valid JSON with these top-level keys: grammar, l1_patterns, vocabulary, coherence, delivery, top_fixes, encouragement. grammar and l1_patterns are arrays. vocabulary, coherence and delivery each contain score (0-100) and note. top_fixes is exactly three objects with title, you_said and try. Do not use markdown.`
+  const plainParts: Array<Record<string, unknown>> = [{ text: plainPrompt }, ...parts.slice(1)]
+  const plainResponse = await geminiGenerateContent(key, plainParts)
 
   if (!plainResponse.ok) {
     const plainDetail = await plainResponse.text()
     throw new Error(
-      `Gemini structured analysis failed (${structuredResponse.status}): ${structuredDetail.slice(0, 240)}; ` +
-      `plain audio retry failed (${plainResponse.status}): ${plainDetail.slice(0, 240)}`,
+      `Gemini GenerateContent structured request failed (${structuredResponse.status}): ${structuredDetail.slice(0, 240)}; ` +
+      `plain audio request failed (${plainResponse.status}): ${plainDetail.slice(0, 240)}`,
     )
   }
 
   const plainPayload = await plainResponse.json()
-  const plainText = extractGeminiText(plainPayload)
-  if (!plainText) throw new Error('Gemini plain audio retry returned no text output')
+  const plainText = extractGenerateContentText(plainPayload)
+  if (!plainText) throw new Error('Gemini GenerateContent plain audio request returned no text output')
   return parseJsonText(plainText)
 }
 
@@ -295,14 +291,10 @@ export async function generateTextJson<T>(input: {
   const geminiKey = env('GEMINI_API_KEY')
   if (geminiKey) {
     try {
-      const response = await geminiPost(geminiKey, {
-        model: GEMINI_MODEL,
-        input: input.prompt,
-        response_format: { type: 'text', mime_type: 'application/json', schema: input.schema },
-      })
+      const response = await geminiGenerateContent(geminiKey, [{ text: input.prompt }], input.schema)
       if (!response.ok) throw new Error(await response.text())
       const payload = await response.json()
-      return { data: parseJsonText(extractGeminiText(payload)) as T, provider: 'gemini' }
+      return { data: parseJsonText(extractGenerateContentText(payload)) as T, provider: 'gemini' }
     } catch (error) {
       console.error('Gemini text generation failed; falling back to Groq', error)
     }
