@@ -24,6 +24,33 @@ function normalizedAudioMime(fileName: string, reportedType: string) {
   return byExtension[extension] || 'audio/webm'
 }
 
+function isTransientGeminiError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || '')
+  return /\((408|429|500|502|503|504)\)/.test(message) || /UNAVAILABLE|RESOURCE_EXHAUSTED|high demand/i.test(message)
+}
+
+async function analyzeWithGeminiRetry(input: Parameters<typeof analyzeWithGemini>[0]) {
+  const maxAttempts = 3
+  let lastError: unknown
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await analyzeWithGemini(input)
+    } catch (error) {
+      lastError = error
+      if (!isTransientGeminiError(error) || attempt === maxAttempts) throw error
+
+      // Short exponential backoff with jitter. Keep the total retry window small so
+      // an interactive speaking session can still fall back to Groq quickly.
+      const baseDelayMs = attempt === 1 ? 800 : 1800
+      const jitterMs = Math.floor(Math.random() * 350)
+      await new Promise(resolve => setTimeout(resolve, baseDelayMs + jitterMs))
+    }
+  }
+
+  throw lastError
+}
+
 export const Route = createFileRoute('/api/analyze')({
   server: {
     handlers: {
@@ -96,7 +123,7 @@ export const Route = createFileRoute('/api/analyze')({
           let rawAnalysis
           let analysisProvider: 'gemini-audio' | 'gemini-text' | 'groq-text' | 'deterministic-only'
           try {
-            rawAnalysis = await analyzeWithGemini({ transcript, topicTitle, points, metrics, audio })
+            rawAnalysis = await analyzeWithGeminiRetry({ transcript, topicTitle, points, metrics, audio })
             analysisProvider = audio ? 'gemini-audio' : 'gemini-text'
           } catch (geminiError) {
             warnings.push(geminiError instanceof Error ? geminiError.message : 'Gemini analysis failed')
