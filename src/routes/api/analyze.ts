@@ -40,6 +40,7 @@ export const Route = createFileRoute('/api/analyze')({
           let authoritativeDuration = durationSec
           let wordTimestamps: Array<{ word: string; start: number; end: number }> = []
           let transcriptionProvider: 'groq-whisper' | 'browser' = 'browser'
+          let whisperSegments = 0
 
           if (audio) {
             try {
@@ -48,6 +49,7 @@ export const Route = createFileRoute('/api/analyze')({
                 transcript = transcription.text
                 authoritativeDuration = transcription.duration || durationSec
                 wordTimestamps = transcription.words
+                whisperSegments = transcription.segments.length
                 transcriptionProvider = 'groq-whisper'
               }
             } catch (error) {
@@ -86,6 +88,13 @@ export const Route = createFileRoute('/api/analyze')({
 
           const analysis = validateAnalysis(rawAnalysis, transcript, metrics)
           const scores = scoreSession(metrics, analysis)
+          let largestRawWordGapSec = 0
+          for (let index = 1; index < wordTimestamps.length; index += 1) {
+            largestRawWordGapSec = Math.max(
+              largestRawWordGapSec,
+              Math.max(0, wordTimestamps[index].start - wordTimestamps[index - 1].end),
+            )
+          }
 
           return Response.json(
             {
@@ -96,6 +105,15 @@ export const Route = createFileRoute('/api/analyze')({
               providers: { transcription: transcriptionProvider, analysis: analysisProvider },
               degraded: transcriptionProvider !== 'groq-whisper' || analysisProvider !== 'gemini-audio',
               warnings: process.env.NODE_ENV === 'production' ? [] : warnings,
+              ...(process.env.NODE_ENV !== 'production'
+                ? {
+                    diagnostics: {
+                      timestampedWords: wordTimestamps.length,
+                      whisperSegments,
+                      largestRawWordGapSec: Number(largestRawWordGapSec.toFixed(3)),
+                    },
+                  }
+                : {}),
             },
             { headers: { 'Cache-Control': 'no-store' } },
           )
