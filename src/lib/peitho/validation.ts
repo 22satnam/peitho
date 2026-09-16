@@ -4,6 +4,20 @@ function hasVerbatimQuote(transcript: string, quote: unknown) {
   return typeof quote === 'string' && quote.trim().length > 0 && transcript.toLowerCase().includes(quote.trim().toLowerCase())
 }
 
+function isDefensibleSpokenGrammarIssue(issue: unknown) {
+  const text = String(issue || '').toLowerCase()
+  if (!text) return false
+  // These are writing/fluency labels, not reliable spoken-grammar findings from ASR text.
+  return !/(run[- ]?on|comma splice|punctuat|capitaliz|filler|hesitat|disfluenc)/i.test(text)
+}
+
+function isDefensibleL1Pattern(pattern: unknown) {
+  const text = String(pattern || '').toLowerCase()
+  if (!text) return false
+  // Generic disfluency is universal and must never be presented as evidence of L1 transfer.
+  return !/(filler|hesitat|disfluenc|pause|repetition|\bum\b|\buh\b|\blike\b)/i.test(text)
+}
+
 function sentenceSamples(transcript: string) {
   const samples = transcript
     .split(/(?<=[.!?])\s+/)
@@ -46,12 +60,12 @@ function metricFixes(transcript: string, metrics: PeithoMetrics) {
 
 export function validateAnalysis(raw: AnalysisShape, transcript: string, metrics: PeithoMetrics): AnalysisShape {
   const grammar = (Array.isArray(raw.grammar) ? raw.grammar : [])
-    .filter((item) => hasVerbatimQuote(transcript, item?.quote))
+    .filter((item) => hasVerbatimQuote(transcript, item?.quote) && isDefensibleSpokenGrammarIssue(item?.issue))
     .slice(0, 5)
     .map((item) => ({ quote: String(item.quote), issue: String(item.issue || ''), fix: String(item.fix || '') }))
 
   const l1Patterns = (Array.isArray(raw.l1_patterns) ? raw.l1_patterns : [])
-    .filter((item) => hasVerbatimQuote(transcript, item?.quote))
+    .filter((item) => hasVerbatimQuote(transcript, item?.quote) && isDefensibleL1Pattern(item?.pattern))
     .slice(0, 3)
     .map((item) => ({ quote: String(item.quote), pattern: String(item.pattern || ''), fix: String(item.fix || '') }))
 
@@ -70,15 +84,15 @@ export function validateAnalysis(raw: AnalysisShape, transcript: string, metrics
     grammar,
     l1_patterns: l1Patterns,
     vocabulary: {
-      score: Number(raw.vocabulary?.score) || 60,
+      score: Number.isFinite(Number(raw.vocabulary?.score)) ? Number(raw.vocabulary?.score) : 60,
       note: String(raw.vocabulary?.note || 'Vocabulary analysis was unavailable for this run.'),
     },
     coherence: {
-      score: Number(raw.coherence?.score) || 60,
+      score: Number.isFinite(Number(raw.coherence?.score)) ? Number(raw.coherence?.score) : 60,
       note: String(raw.coherence?.note || 'Coherence analysis was unavailable for this run.'),
     },
     delivery: {
-      score: Number(raw.delivery?.score) || 0,
+      score: Number.isFinite(Number(raw.delivery?.score)) ? Number(raw.delivery?.score) : 0,
       note: String(raw.delivery?.note || 'Audio unavailable — delivery was not scored.'),
     },
     top_fixes: validFixes.slice(0, 3),
