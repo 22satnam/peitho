@@ -1,9 +1,11 @@
 import React from 'react'
 
 const links = [
-  { label: 'LinkedIn', href: 'https://linkedin.com/in/22satnam' },
-  { label: 'X', href: 'https://x.com/22satnamdev' },
-  { label: 'Portfolio', href: 'https://satnamsingh.in' },
+  { label: 'Privacy', href: '/privacy', external: false },
+  { label: 'Terms', href: '/terms', external: false },
+  { label: 'LinkedIn', href: 'https://linkedin.com/in/22satnam', external: true },
+  { label: 'X', href: 'https://x.com/22satnamdev', external: true },
+  { label: 'Portfolio', href: 'https://satnamsingh.in', external: true },
 ]
 
 export default function CreatorSignature() {
@@ -21,7 +23,7 @@ export default function CreatorSignature() {
       <span className="sep">·</span>
       {links.map((link, index) => (
         <React.Fragment key={link.href}>
-          <a href={link.href} target="_blank" rel="noopener noreferrer" aria-label={`${link.label} — Satnam Singh`}>{link.label}</a>
+          <a href={link.href} {...(link.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})} aria-label={`${link.label}${link.external ? ' — Satnam Singh' : ''}`}>{link.label}</a>
           {index < links.length - 1 && <span className="sep">·</span>}
         </React.Fragment>
       ))}
