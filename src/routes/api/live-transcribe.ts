@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { authenticatedUser, unauthorizedResponse } from '../../lib/peitho/auth.server'
 
 function liveMime(fileName: string, reported: string) {
   const ext = fileName.toLowerCase().split('.').pop() || ''
@@ -44,6 +45,8 @@ export const Route = createFileRoute('/api/live-transcribe')({
     handlers: {
       POST: async ({ request }) => {
         try {
+          if (!(await authenticatedUser(request))) return unauthorizedResponse()
+
           const key = process.env.GROQ_API_KEY?.trim()
           if (!key) return Response.json({ error: 'GROQ_API_KEY is not configured.' }, { status: 500 })
           const form = await request.formData()
