@@ -103,12 +103,25 @@ async function uploadAudioToGemini(key:string,audio:Blob):Promise<GeminiUploaded
 }
 async function deleteGeminiFile(key:string,name:string){if(!name.startsWith('files/'))return;try{await fetch(`https://generativelanguage.googleapis.com/v1beta/${name}`,{method:'DELETE',headers:{'x-goog-api-key':key}})}catch{}}
 
-export async function transcribeWithGroq(audio:Blob,fileName='session.webm'):Promise<TranscriptionResult>{
+export async function transcribeWithGroq(audio:Blob,fileName='session.webm',context=''):Promise<TranscriptionResult>{
  const key=env('GROQ_API_KEY');if(!key)throw new Error('GROQ_API_KEY is not configured')
- const form=new FormData();form.append('file',audio,fileName);form.append('model',GROQ_STT_MODEL);form.append('language','en');form.append('temperature','0');form.append('response_format','verbose_json');form.append('timestamp_granularities[]','word');form.append('timestamp_granularities[]','segment');form.append('prompt','Um, uh, hmm, er, you know, I mean, basically, like, so yeah. Keep natural disfluencies and filler words exactly as spoken.')
+ const form=new FormData()
+ form.append('file',audio,fileName)
+ form.append('model',GROQ_FINAL_STT_MODEL)
+ form.append('language','en')
+ form.append('temperature','0')
+ form.append('response_format','verbose_json')
+ form.append('timestamp_granularities[]','word')
+ form.append('timestamp_granularities[]','segment')
+ const contextHint=String(context||'').replace(/\s+/g,' ').trim().slice(0,700)
+ form.append('prompt',[
+   'Professional English speaking practice. Preserve um, uh, hmm, er, you know, I mean, basically, like, and so yeah exactly when spoken.',
+   contextHint?`Topic context and likely terminology: ${contextHint}`:'',
+ ].filter(Boolean).join(' '))
  const response=await fetch('https://api.groq.com/openai/v1/audio/transcriptions',{method:'POST',headers:{Authorization:`Bearer ${key}`},body:form})
  if(!response.ok)throw new Error(`Groq transcription failed (${response.status}): ${(await response.text()).slice(0,500)}`)
- const data:any=await response.json();const words=(Array.isArray(data.words)?data.words:[]).filter((word:any)=>typeof word?.word==='string').map((word:any)=>({word:word.word,start:Number(word.start)||0,end:Number(word.end)||0}))
+ const data:any=await response.json()
+ const words=(Array.isArray(data.words)?data.words:[]).filter((w:any)=>typeof w?.word==='string').map((w:any)=>({word:w.word,start:Number(w.start)||0,end:Number(w.end)||0}))
  return{text:String(data.text||'').trim(),duration:Number(data.duration)||undefined,words,segments:Array.isArray(data.segments)?data.segments:[]}
 }
 
