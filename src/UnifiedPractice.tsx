@@ -11,7 +11,7 @@ const TOPICS=[
 {id:'teach-something',cat:'Everyday',title:'Teach something you know well',points:['Why a beginner should care','The one idea everything else hangs on','A mistake every beginner makes','How to practice it this week']},
 {id:'remote-work',cat:'Opinions',title:'Remote work: better or worse for careers?',points:['Your position, stated in the first sentence','The strongest argument for the other side','Why your side still wins — one example','Who this advice does not apply to']},
 {id:'ai-languages',cat:'Opinions',title:'Will AI change how we learn languages?',points:['What is broken about how people learn now','One thing AI genuinely does better','One thing it cannot replace','Your prediction for five years out']},]
-const FILLER_RE=/\b(um+|uh+|umm+|hmm+|erm*|you know|i mean|basically|like|so yeah)\b/gi,LIVE_REFRESH_SECONDS=3,LIVE_CONTEXT_SECONDS=9
+const FILLER_RE=/\b(um+|uh+|umm+|hmm+|erm*|you know|i mean|basically|like|so yeah)\b/gi,LIVE_REFRESH_SECONDS=3,LIVE_CONTEXT_SECONDS=12
 const CSS=`
 @import url('https://fonts.googleapis.com/css2?family=GFS+Didot&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap');
 :root{--paper:#F6F4EF;--panel:#fff;--wash:#EFECE3;--line:#E1DDD0;--line2:#C9C3B2;--ink:#1D1B16;--dim:#6E6A5C;--faint:#98937F;--aegean:#1A56A8;--aegean-soft:rgba(26,86,168,.10);--gold:#A87C24;--gold-soft:rgba(168,124,36,.12);--clay:#C2492B;--clay-soft:rgba(194,73,43,.12);--laurel:#587947;--laurel-soft:rgba(88,121,71,.12);--didot:'GFS Didot',Georgia,serif;--sans:'Instrument Sans',-apple-system,'Segoe UI',sans-serif}
