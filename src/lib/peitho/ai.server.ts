@@ -1,7 +1,7 @@
 import type { AnalysisShape, PeithoMetrics, WordTimestamp } from './metrics'
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash'
-const GROQ_STT_MODEL = process.env.GROQ_STT_MODEL || 'whisper-large-v3-turbo'
+const GROQ_FINAL_STT_MODEL = process.env.GROQ_FINAL_STT_MODEL?.trim() || 'whisper-large-v3'
 const GROQ_FALLBACK_MODEL = process.env.GROQ_FALLBACK_MODEL || 'openai/gpt-oss-120b'
 
 export type TranscriptionResult = {
