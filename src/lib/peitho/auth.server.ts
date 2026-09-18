@@ -16,6 +16,15 @@ function bearerToken(request: Request) {
   return match?.[1]?.trim() || ''
 }
 
+export function userScopedClient(request: Request) {
+  const token = bearerToken(request)
+  if (!token) return null
+  return createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  })
+}
+
 export async function authenticatedUser(request: Request): Promise<User | null> {
   const token = bearerToken(request)
   if (!token) return null
