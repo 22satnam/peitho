@@ -1,4 +1,6 @@
-import { createFileRoute } from '@tanstack/react-router'
-import { TermsPage } from '../components/LegalPage'
+import {createFileRoute} from '@tanstack/react-router'
+import {TermsPage} from '../components/LegalPage'
+import CreatorSignature from '../components/CreatorSignature'
 
-export const Route = createFileRoute('/terms')({ component: TermsPage })
+function TermsRoute(){return <><TermsPage/><CreatorSignature/></>}
+export const Route=createFileRoute('/terms')({component:TermsRoute})
