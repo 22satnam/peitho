@@ -11,6 +11,16 @@ export type TranscriptionResult = {
   segments: Array<{ start?: number; end?: number; text?: string }>
 }
 
+const VOICE_DIMENSION_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    score: { type: 'integer', minimum: 0, maximum: 100 },
+    note: { type: 'string' },
+  },
+  required: ['score','note'],
+} as const
+
 const CLARITY_MOMENT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -32,7 +42,7 @@ export const ANALYSIS_SCHEMA = {
     l1_patterns: { type: 'array', maxItems: 3, items: { type: 'object', additionalProperties: false, properties: { quote: { type: 'string' }, pattern: { type: 'string' }, fix: { type: 'string' } }, required: ['quote', 'pattern', 'fix'] } },
     vocabulary: { type: 'object', additionalProperties: false, properties: { score: { type: 'integer', minimum: 0, maximum: 100 }, note: { type: 'string' } }, required: ['score', 'note'] },
     coherence: { type: 'object', additionalProperties: false, properties: { score: { type: 'integer', minimum: 0, maximum: 100 }, note: { type: 'string' } }, required: ['score', 'note'] },
-    delivery: { type: 'object', additionalProperties: false, properties: { score: { type: 'integer', minimum: 0, maximum: 100 }, note: { type: 'string' }, clarity_moments: { type:'array', maxItems:3, items:CLARITY_MOMENT_SCHEMA } }, required: ['score', 'note', 'clarity_moments'] },
+    delivery: { type: 'object', additionalProperties: false, properties: { score: { type: 'integer', minimum: 0, maximum: 100 }, note: { type: 'string' }, clarity_moments: { type:'array', maxItems:3, items:CLARITY_MOMENT_SCHEMA }, tonal_variation: VOICE_DIMENSION_SCHEMA, volume_projection: VOICE_DIMENSION_SCHEMA, enunciation: VOICE_DIMENSION_SCHEMA }, required: ['score', 'note', 'clarity_moments', 'tonal_variation', 'volume_projection', 'enunciation'] },
     top_fixes: { type: 'array', minItems: 3, maxItems: 3, items: { type: 'object', additionalProperties: false, properties: { title: { type: 'string' }, you_said: { type: 'string' }, try: { type: 'string' } }, required: ['title', 'you_said', 'try'] } },
     encouragement: { type: 'string' },
   },
@@ -51,8 +61,13 @@ For delivery.clarity_moments, return at most 3 moments and [] when there is no s
 - unclear: words are genuinely hard to make out in the audio.
 - mumbled: articulation/volume causes syllables or word boundaries to blur.
 - possible_mispronunciation: use ONLY with high confidence when the intended word is evident and its spoken form materially harms intelligibility. Never use this for accent/dialect variation, names, technical terms, or a guess.
-Every clarity_moment.quote must be copied verbatim from the transcript. Use confidence=high for possible_mispronunciation. Prefer recognition_uncertain over accusing the speaker when the transcript itself may simply be wrong.`
-    : 'No audio is available in this path. Set delivery.score to 0, delivery.note to "Audio unavailable — delivery was not scored.", and delivery.clarity_moments to [].'
+Every clarity_moment.quote must be copied verbatim from the transcript. Use confidence=high for possible_mispronunciation. Prefer recognition_uncertain over accusing the speaker when the transcript itself may simply be wrong.
+Also score these three audio-only dimensions independently:
+- delivery.tonal_variation: 0-100 for purposeful variation in pitch/energy/emphasis. A calm voice is not automatically weak; penalize monotony only when emphasis stays too flat to help the listener.
+- delivery.volume_projection: 0-100 for audible, steady vocal energy at the microphone. Do not claim to know absolute room loudness or physical projection because microphone gain and distance can distort that. Judge consistency/audibility in this recording.
+- delivery.enunciation: 0-100 for intelligibility and articulation. Be accent-neutral. Do not penalize dialect or accent; score whether words are sufficiently distinct and understandable.
+Each note must explain the audible evidence in one concise sentence.
+    : 'No audio is available in this path. Set delivery.score to 0, delivery.note to "Audio unavailable — delivery was not scored.", delivery.clarity_moments to [], and set delivery.tonal_variation, delivery.volume_projection and delivery.enunciation to {score:0,note:"Not scored in this review."}.'
 
   return `You are Peitho, a precise and respectful spoken-English coach. Review only evidence actually present in the speech. The transcript was produced by automatic speech recognition and can contain punctuation errors or occasional misheard words.
 
