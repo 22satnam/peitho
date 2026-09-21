@@ -66,7 +66,7 @@ Also score these three audio-only dimensions independently:
 - delivery.tonal_variation: 0-100 for purposeful variation in pitch/energy/emphasis. A calm voice is not automatically weak; penalize monotony only when emphasis stays too flat to help the listener.
 - delivery.volume_projection: 0-100 for audible, steady vocal energy at the microphone. Do not claim to know absolute room loudness or physical projection because microphone gain and distance can distort that. Judge consistency/audibility in this recording.
 - delivery.enunciation: 0-100 for intelligibility and articulation. Be accent-neutral. Do not penalize dialect or accent; score whether words are sufficiently distinct and understandable.
-Each note must explain the audible evidence in one concise sentence.
+Each note must explain the audible evidence in one concise sentence.`
     : 'No audio is available in this path. Set delivery.score to 0, delivery.note to "Audio unavailable — delivery was not scored.", delivery.clarity_moments to [], and set delivery.tonal_variation, delivery.volume_projection and delivery.enunciation to {score:0,note:"Not scored in this review."}.'
 
   return `You are Peitho, a precise and respectful spoken-English coach. Review only evidence actually present in the speech. The transcript was produced by automatic speech recognition and can contain punctuation errors or occasional misheard words.
