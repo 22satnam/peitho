@@ -1,4 +1,5 @@
-import React from 'react'
+import React,{useEffect,useState}from'react'
+import{supabase}from'../lib/supabase.client'
 
 const CSS=`
 .pbn{position:relative;z-index:40;padding:20px 24px 0;font-family:'Instrument Sans',-apple-system,'Segoe UI',sans-serif}
@@ -10,9 +11,11 @@ const CSS=`
 `
 
 export default function PublicNav(){
+ const[signedIn,setSignedIn]=useState(false)
+ useEffect(()=>{supabase.auth.getSession().then(({data})=>setSignedIn(Boolean(data.session)));const{data:sub}=supabase.auth.onAuthStateChange((_e,s)=>setSignedIn(Boolean(s)));return()=>sub.subscription.unsubscribe()},[])
  return <nav className="pbn"><style>{CSS}</style><div className="pbn-inner">
   <a className="pbn-brand" href="/"><img className="pbn-mark" src="/favicon.svg" alt=""/><span className="pbn-name">Peitho</span></a>
   <div className="pbn-links"><a href="/#how">How it works</a><a href="/#insights">What you get</a><a href="/#progress">Progress</a></div>
-  <div className="pbn-actions"><a className="pbn-login" href="/auth/login">Sign in</a><a className="pbn-cta" href="/auth/signup">Get started</a></div>
+  <div className="pbn-actions">{signedIn?<><a className="pbn-login" href="/history">My progress</a><a className="pbn-cta" href="/">Back to practice</a></>:<><a className="pbn-login" href="/auth/login">Sign in</a><a className="pbn-cta" href="/auth/signup">Get started</a></>}</div>
  </div></nav>
 }
