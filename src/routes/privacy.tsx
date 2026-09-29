@@ -1,6 +1,7 @@
 import {createFileRoute} from '@tanstack/react-router'
 import PrivacyPage from '../components/PrivacyPage'
+import PublicNav from '../components/PublicNav'
 import CreatorSignature from '../components/CreatorSignature'
 
-function PrivacyRoute(){return <><PrivacyPage/><CreatorSignature/></>}
-export const Route=createFileRoute('/privacy')({component:PrivacyRoute})
+function Page(){return <><PublicNav/><PrivacyPage/><CreatorSignature/></>}
+export const Route=createFileRoute('/privacy')({component:Page})
