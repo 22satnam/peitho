@@ -1,6 +1,7 @@
 import type { AnalysisShape, PeithoMetrics, WordTimestamp } from './metrics'
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash'
+const GEMINI_AUDIO_FALLBACK_MODEL = process.env.GEMINI_AUDIO_FALLBACK_MODEL || 'gemini-3.7-flash'
 const GROQ_FINAL_STT_MODEL = process.env.GROQ_FINAL_STT_MODEL?.trim() || 'whisper-large-v3'
 const GROQ_FALLBACK_MODEL = process.env.GROQ_FALLBACK_MODEL || 'openai/gpt-oss-120b'
 
@@ -96,8 +97,8 @@ Rules:
 - Do not invent words the speaker did not say. If a phrase appears semantically bizarre or likely to be an ASR mistake, mark it only as recognition_uncertain when audio supports that, and do not build grammar/L1 criticism around it.`
 }
 
-async function geminiGenerateContent(key:string,parts:Array<Record<string,unknown>>,schema?:Record<string,unknown>){
- const endpoint=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`
+async function geminiGenerateContent(key:string,parts:Array<Record<string,unknown>>,schema?:Record<string,unknown>,model=GEMINI_MODEL){
+ const endpoint=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`
  const body:Record<string,unknown>={contents:[{role:'user',parts}]}
  if(schema)body.generationConfig={responseMimeType:'application/json',responseJsonSchema:schema,temperature:.2}
  return fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify(body)})
@@ -143,7 +144,22 @@ export async function transcribeWithGroq(audio:Blob,fileName='session.webm',cont
 export async function analyzeWithGemini(input:{transcript:string;topicTitle:string;points:string[];metrics:PeithoMetrics;audio?:Blob|null}):Promise<AnalysisShape>{
  const key=env('GEMINI_API_KEY');if(!key)throw new Error('GEMINI_API_KEY is not configured')
  const prompt=analysisPrompt({...input,hasAudio:Boolean(input.audio)});let uploaded:GeminiUploadedFile|null=null
- try{const parts:Array<Record<string,unknown>>=[{text:prompt}];if(input.audio){uploaded=await uploadAudioToGemini(key,input.audio);parts.push({fileData:{mimeType:uploaded.mimeType,fileUri:uploaded.uri}})}const response=await geminiGenerateContent(key,parts,ANALYSIS_SCHEMA as unknown as Record<string,unknown>);if(!response.ok)throw new Error(`Gemini GenerateContent failed (${response.status}): ${(await response.text()).slice(0,700)}`);const payload=await response.json();const text=extractGenerateContentText(payload);if(!text)throw new Error('Gemini GenerateContent returned no text output');return parseJsonText(text)}finally{if(uploaded)await deleteGeminiFile(key,uploaded.name)}
+ try{
+   const parts:Array<Record<string,unknown>>=[{text:prompt}]
+   if(input.audio){uploaded=await uploadAudioToGemini(key,input.audio);parts.push({fileData:{mimeType:uploaded.mimeType,fileUri:uploaded.uri}})}
+   const models=[GEMINI_MODEL,GEMINI_AUDIO_FALLBACK_MODEL].filter((model,index,array)=>model&&array.indexOf(model)===index)
+   let lastError:Error|null=null
+   for(const model of models){
+     try{
+       const response=await geminiGenerateContent(key,parts,ANALYSIS_SCHEMA as unknown as Record<string,unknown>,model)
+       if(!response.ok)throw new Error(`Gemini ${model} failed (${response.status}): ${(await response.text()).slice(0,700)}`)
+       const payload=await response.json(),text=extractGenerateContentText(payload)
+       if(!text)throw new Error(`Gemini ${model} returned no text output`)
+       return parseJsonText(text)
+     }catch(error){lastError=error instanceof Error?error:new Error(String(error))}
+   }
+   throw lastError||new Error('Gemini audio review failed')
+ }finally{if(uploaded)await deleteGeminiFile(key,uploaded.name)}
 }
 
 export async function analyzeWithGroqFallback(input:{transcript:string;topicTitle:string;points:string[];metrics:PeithoMetrics}):Promise<AnalysisShape>{
