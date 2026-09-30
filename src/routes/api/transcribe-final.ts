@@ -49,7 +49,9 @@ export const Route=createFileRoute('/api/transcribe-final')({server:{handlers:{P
      wordCount:transcription.text.trim().split(/\s+/).length
    },{headers:{'Cache-Control':'no-store'}})
  }catch(error){
-   console.error('[Peitho] final transcription failed',error instanceof Error?error.message:String(error))
+   const failure=error instanceof Error?error.message:String(error)
+   console.error('[Peitho] final transcription failed',failure)
+   try{const diag=userScopedClient(request);if(diag)await diag.rpc('log_provider_event',{p_provider:'groq',p_stage:'final_transcription',p_message:failure.replace(/[\r\n]+/g,' ').slice(0,350)})}catch{}
    return Response.json({error:publicError(error)},{status:502,headers:{'Cache-Control':'no-store'}})
  }
 }}}})
