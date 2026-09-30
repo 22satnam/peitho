@@ -55,7 +55,7 @@ function env(name: 'GROQ_API_KEY' | 'GEMINI_API_KEY') { return process.env[name]
 function parseJsonText(text: string) { return JSON.parse(text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '').trim()) }
 function extractGenerateContentText(payload: any) { const candidates=Array.isArray(payload?.candidates)?payload.candidates:[];const texts:string[]=[];for(const candidate of candidates){const parts=Array.isArray(candidate?.content?.parts)?candidate.content.parts:[];for(const part of parts)if(typeof part?.text==='string')texts.push(part.text)}return texts.join('\n').trim() }
 
-function analysisPrompt(input:{transcript:string;topicTitle:string;points:string[];metrics:PeithoMetrics;hasAudio:boolean}) {
+function analysisPrompt(input:{transcript:string;topicTitle:string;points:string[];metrics:PeithoMetrics;hasAudio:boolean;confirmed?:boolean}) {
   const deliveryInstruction=input.hasAudio
     ? `You can hear the recording. Evaluate delivery from what you actually hear: pace, hesitation, intelligibility, clarity and pronunciation. Do not infer an accent defect. delivery.score must reflect the actual audio.
 For delivery.clarity_moments, return at most 3 moments and [] when there is no strong evidence. A clarity moment is for coaching intelligibility, not judging accent:
@@ -71,7 +71,7 @@ Also score these three audio-only dimensions independently:
 Each note must explain the audible evidence in one concise sentence.`
     : 'No audio is available in this path. Set delivery.score to 0, delivery.note to "Audio unavailable — delivery was not scored.", delivery.clarity_moments to [], and set delivery.tonal_variation, delivery.volume_projection and delivery.enunciation to {score:0,note:"Not scored in this review."}.'
 
-  return `You are Peitho, a precise and respectful spoken-English coach. Review only evidence actually present in the speech. The transcript was produced by automatic speech recognition and can contain punctuation errors or occasional misheard words.
+  return `You are Peitho, a precise and respectful spoken-English coach. Review only evidence actually present in the speech. ${input.confirmed?'The speaker reviewed and confirmed this transcript, correcting speech-recognition errors. Treat their confirmed words as authoritative for grammar, vocabulary, quotations and coaching. Use the audio for delivery, not to overwrite corrected names, companies or technical words.':'The transcript was produced by automatic speech recognition and can contain punctuation errors or occasional misheard words.'}
 
 ${deliveryInstruction}
 
@@ -132,8 +132,8 @@ export async function transcribeWithGroq(audio:Blob,fileName='session.webm',cont
  form.append('timestamp_granularities[]','segment')
  const contextHint=String(context||'').replace(/\s+/g,' ').trim().slice(0,700)
  form.append('prompt',[
-   'Professional English speaking practice. Preserve um, uh, hmm, er, you know, I mean, basically, like, and so yeah exactly when spoken.',
-   contextHint?`Topic context and likely terminology: ${contextHint}`:'',
+   'Verbatim professional English speech. Include fillers or repetitions only when acoustically clear. Do not invent, complete, embellish or paraphrase words.',
+   contextHint?`Possibly spoken names and technical terms (use ONLY if heard): ${contextHint}`:'',
  ].filter(Boolean).join(' '))
  const response=await fetch('https://api.groq.com/openai/v1/audio/transcriptions',{method:'POST',headers:{Authorization:`Bearer ${key}`},body:form})
  if(!response.ok)throw new Error(`Groq transcription failed (${response.status}): ${(await response.text()).slice(0,500)}`)
@@ -142,7 +142,7 @@ export async function transcribeWithGroq(audio:Blob,fileName='session.webm',cont
  return{text:String(data.text||'').trim(),duration:Number(data.duration)||undefined,words,segments:Array.isArray(data.segments)?data.segments:[]}
 }
 
-export async function analyzeWithGemini(input:{transcript:string;topicTitle:string;points:string[];metrics:PeithoMetrics;audio?:Blob|null}):Promise<AnalysisShape>{
+export async function analyzeWithGemini(input:{transcript:string;topicTitle:string;points:string[];metrics:PeithoMetrics;audio?:Blob|null;confirmed?:boolean}):Promise<AnalysisShape>{
  const key=env('GEMINI_API_KEY');if(!key)throw new Error('GEMINI_API_KEY is not configured')
  const prompt=analysisPrompt({...input,hasAudio:Boolean(input.audio)});let uploaded:GeminiUploadedFile|null=null
  try{
@@ -194,7 +194,7 @@ export async function analyzeWithGemini(input:{transcript:string;topicTitle:stri
  }finally{if(uploaded)await deleteGeminiFile(key,uploaded.name)}
 }
 
-export async function analyzeWithGroqFallback(input:{transcript:string;topicTitle:string;points:string[];metrics:PeithoMetrics}):Promise<AnalysisShape>{
+export async function analyzeWithGroqFallback(input:{transcript:string;topicTitle:string;points:string[];metrics:PeithoMetrics;confirmed?:boolean}):Promise<AnalysisShape>{
  const key=env('GROQ_API_KEY');if(!key)throw new Error('GROQ_API_KEY is not configured')
  const prompt=analysisPrompt({...input,hasAudio:false});const response=await fetch('https://api.groq.com/openai/v1/chat/completions',{method:'POST',headers:{Authorization:`Bearer ${key}`,'Content-Type':'application/json'},body:JSON.stringify({model:GROQ_FALLBACK_MODEL,temperature:.2,response_format:{type:'json_schema',json_schema:{name:'peitho_speech_analysis',strict:true,schema:ANALYSIS_SCHEMA}},messages:[{role:'system',content:'Return evidence-backed spoken-English coaching that conforms exactly to the supplied JSON schema.'},{role:'user',content:prompt}]})})
  if(!response.ok)throw new Error(`Groq fallback failed (${response.status}): ${(await response.text()).slice(0,500)}`)
