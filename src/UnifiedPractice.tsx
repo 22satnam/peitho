@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React,{useCallback,useEffect,useRef,useState}from'react'
 import SessionDashboard from'./components/SessionDashboard'
+import {supabase} from './lib/supabase.client'
 
 const TOPICS=[
 {id:'proud-project',cat:'Interviews',title:"Walk me through a project you're proud of",points:['What the project was, in one plain sentence','The hardest problem you hit, and how you approached it','One decision you made that changed the outcome',"What you'd do differently next time"]},
@@ -11,7 +12,7 @@ const TOPICS=[
 {id:'teach-something',cat:'Everyday',title:'Teach something you know well',points:['Why a beginner should care','The one idea everything else hangs on','A mistake every beginner makes','How to practice it this week']},
 {id:'remote-work',cat:'Opinions',title:'Remote work: better or worse for careers?',points:['Your position, stated in the first sentence','The strongest argument for the other side','Why your side still wins — one example','Who this advice does not apply to']},
 {id:'ai-languages',cat:'Opinions',title:'Will AI change how we learn languages?',points:['What is broken about how people learn now','One thing AI genuinely does better','One thing it cannot replace','Your prediction for five years out']},]
-const FILLER_RE=/\b(um+|uh+|umm+|hmm+|erm*|you know|i mean|basically|like|so yeah)\b/gi,LIVE_REFRESH_SECONDS=3,LIVE_CONTEXT_SECONDS=12
+const FILLER_RE=/\b(um+|uh+|umm+|hmm+|erm*|you know|i mean|basically|like|so yeah)\b/gi,LIVE_REFRESH_SECONDS=9
 const CSS=`
 @import url('https://fonts.googleapis.com/css2?family=GFS+Didot&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap');
 :root{--paper:#F6F4EF;--panel:#fff;--wash:#EFECE3;--line:#E1DDD0;--line2:#C9C3B2;--ink:#1D1B16;--dim:#6E6A5C;--faint:#98937F;--aegean:#1A56A8;--aegean-soft:rgba(26,86,168,.10);--gold:#A87C24;--gold-soft:rgba(168,124,36,.12);--clay:#C2492B;--clay-soft:rgba(194,73,43,.12);--laurel:#587947;--laurel-soft:rgba(88,121,71,.12);--didot:'GFS Didot',Georgia,serif;--sans:'Instrument Sans',-apple-system,'Segoe UI',sans-serif}
@@ -24,18 +25,100 @@ function recorderType(){if(typeof MediaRecorder==='undefined')return'';return['a
 const fileName=t=>t.includes('mp4')?'session.m4a':t.includes('ogg')?'session.ogg':'session.webm'
 function Marked({text}){const r=/\b(um+|uh+|umm+|hmm+|erm*|you know|i mean|basically|like|so yeah)\b/gi,p=String(text||'').split(r);return <>{p.map((x,i)=>i%2?<span className="fill" key={i}>{x}</span>:<React.Fragment key={i}>{x}</React.Fragment>)}</>}
 function wavBlob(samples,sampleRate){let length=0;for(const s of samples)length+=s.length;const out=new Float32Array(length);let pos=0;for(const s of samples){out.set(s,pos);pos+=s.length}const buf=new ArrayBuffer(44+out.length*2),v=new DataView(buf),str=(o,s)=>{for(let i=0;i<s.length;i++)v.setUint8(o+i,s.charCodeAt(i))};str(0,'RIFF');v.setUint32(4,36+out.length*2,true);str(8,'WAVE');str(12,'fmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,sampleRate,true);v.setUint32(28,sampleRate*2,true);v.setUint16(32,2,true);v.setUint16(34,16,true);str(36,'data');v.setUint32(40,out.length*2,true);for(let i=0,o=44;i<out.length;i++,o+=2){const x=Math.max(-1,Math.min(1,out[i]));v.setInt16(o,x<0?x*0x8000:x*0x7fff,true)}return new Blob([buf],{type:'audio/wav'})}
-const clean=w=>w.toLowerCase().replace(/[^a-z0-9']/g,'')
-function mergeRolling(existing,incoming){const a=existing.trim().split(/\s+/).filter(Boolean),b=incoming.trim().split(/\s+/).filter(Boolean);if(!a.length)return incoming.trim();if(!b.length)return existing.trim();let best=null;const from=Math.max(0,a.length-55);for(let i=from;i<a.length;i++)for(let j=0;j<Math.min(12,b.length);j++){let n=0;while(i+n<a.length&&j+n<b.length&&clean(a[i+n])===clean(b[j+n]))n++;if(n>=3&&(!best||n>best.n))best={i,j,n}}if(best){const replace=Math.max(0,best.i-best.j);return[...a.slice(0,replace),...b].join(' ')}return[...a,...b].join(' ')}
+
 
 export default function UnifiedPractice(){
- const[phase,setPhase]=useState('pick'),[topic,setTopic]=useState(null),[elapsed,setElapsed]=useState(0),[text,setText]=useState(''),[result,setResult]=useState(null),[error,setError]=useState(''),[captionState,setCaptionState]=useState('starting'),[captionError,setCaptionError]=useState(''),[micLevel,setMicLevel]=useState(0),[captionUpdates,setCaptionUpdates]=useState(0)
- const finalText=useRef(''),started=useRef(0),stream=useRef(null),mainRec=useRef(null),chunks=useRef([]),finishing=useRef(false),phaseRef=useRef('pick'),audioCtx=useRef(null),meterRaf=useRef(null),processor=useRef(null),sourceNode=useRef(null),silentGain=useRef(null),rolling=useRef([]),rollingCount=useRef(0),sinceSend=useRef(0),captionQueue=useRef(Promise.resolve())
- useEffect(()=>{phaseRef.current=phase},[phase]);useEffect(()=>()=>cleanup(),[]);useEffect(()=>{if(phase!=='session')return;const id=setInterval(()=>setElapsed(Math.max(0,Math.round((Date.now()-started.current)/1000))),250);return()=>clearInterval(id)},[phase])
+ const[phase,setPhase]=useState('pick'),[topic,setTopic]=useState(null),[elapsed,setElapsed]=useState(0),[text,setText]=useState(''),[result,setResult]=useState(null),[error,setError]=useState(''),[captionState,setCaptionState]=useState('starting'),[captionError,setCaptionError]=useState(''),[micLevel,setMicLevel]=useState(0),[captionUpdates,setCaptionUpdates]=useState(0),[glossary,setGlossary]=useState(''),[draftText,setDraftText]=useState(''),[draftMeta,setDraftMeta]=useState(null),[audioUrl,setAudioUrl]=useState('')
+ const finalText=useRef(''),started=useRef(0),stream=useRef(null),mainRec=useRef(null),chunks=useRef([]),finishing=useRef(false),phaseRef=useRef('pick'),audioCtx=useRef(null),meterRaf=useRef(null),processor=useRef(null),sourceNode=useRef(null),silentGain=useRef(null),rolling=useRef([]),sinceSend=useRef(0),captionQueue=useRef(Promise.resolve()),pendingAudio=useRef(null),pendingDuration=useRef(0)
+ useEffect(()=>{phaseRef.current=phase},[phase]);useEffect(()=>()=>cleanup(),[]);useEffect(()=>()=>{if(audioUrl)URL.revokeObjectURL(audioUrl)},[audioUrl]);useEffect(()=>{supabase.auth.getUser().then(({data})=>{const n=String(data?.user?.user_metadata?.full_name||data?.user?.user_metadata?.name||'').trim();if(n)setGlossary(current=>current||n)}).catch(()=>{})},[]);useEffect(()=>{if(phase!=='session')return;const id=setInterval(()=>setElapsed(Math.max(0,Math.round((Date.now()-started.current)/1000))),250);return()=>clearInterval(id)},[phase])
  const cleanup=useCallback(()=>{if(meterRaf.current)cancelAnimationFrame(meterRaf.current);try{processor.current?.disconnect();sourceNode.current?.disconnect();silentGain.current?.disconnect();audioCtx.current?.close?.()}catch{}processor.current=sourceNode.current=silentGain.current=audioCtx.current=null;stream.current?.getTracks().forEach(t=>t.stop());stream.current=null},[])
- const sendCaptionChunk=useCallback(async blob=>{if(!blob?.size||phaseRef.current!=='session')return;setCaptionState('Peitho is catching up…');try{const f=new FormData();f.append('audio',blob,'live.wav');f.append('fileName','live.wav');const r=await fetch('/api/live-transcribe',{method:'POST',body:f}),p=await r.json().catch(()=>({}));if(!r.ok)throw new Error(p.error||'preview unavailable');if(phaseRef.current!=='session')return;if(p.transcript?.trim()){finalText.current=mergeRolling(finalText.current,p.transcript.trim())+' ';setText(finalText.current);setCaptionUpdates(n=>n+1)}setCaptionState('live captions · ~3s');setCaptionError('')}catch{setCaptionState('live preview paused');setCaptionError('The live preview is taking a break. Peitho is still recording your session, so you can keep speaking.') }},[])
- const queueWindow=useCallback((force=false)=>{const ctx=audioCtx.current;if(!ctx||!rolling.current.length)return;const refresh=Math.round(ctx.sampleRate*LIVE_REFRESH_SECONDS);if(!force&&sinceSend.current<refresh)return;sinceSend.current=0;const snapshot=rolling.current.slice(),blob=wavBlob(snapshot,ctx.sampleRate);captionQueue.current=captionQueue.current.then(()=>sendCaptionChunk(blob)).catch(()=>{})},[sendCaptionChunk])
- const setupLiveAudio=useCallback(s=>{const C=window.AudioContext||window.webkitAudioContext;if(!C)throw new Error('Live voice preview is not supported in this browser.');const ctx=new C();audioCtx.current=ctx;const source=ctx.createMediaStreamSource(s);sourceNode.current=source;const analyser=ctx.createAnalyser();analyser.fftSize=256;source.connect(analyser);const data=new Uint8Array(analyser.frequencyBinCount);const draw=()=>{if(phaseRef.current!=='session')return;analyser.getByteFrequencyData(data);setMicLevel(Math.min(100,Math.round(data.reduce((a,b)=>a+b,0)/data.length*1.7)));meterRaf.current=requestAnimationFrame(draw)};draw();const proc=ctx.createScriptProcessor?.(4096,1,1);if(!proc)throw new Error('Live voice preview is not supported in this browser.');processor.current=proc;const gain=ctx.createGain();silentGain.current=gain;gain.gain.value=0;proc.onaudioprocess=e=>{if(phaseRef.current!=='session'||finishing.current)return;const input=e.inputBuffer.getChannelData(0),copy=new Float32Array(input.length);copy.set(input);rolling.current.push(copy);rollingCount.current+=copy.length;sinceSend.current+=copy.length;const max=Math.round(ctx.sampleRate*LIVE_CONTEXT_SECONDS);while(rollingCount.current>max&&rolling.current.length>1){const first=rolling.current.shift();rollingCount.current-=first.length}if(sinceSend.current>=ctx.sampleRate*LIVE_REFRESH_SECONDS)queueWindow(false)};source.connect(proc);proc.connect(gain);gain.connect(ctx.destination);setCaptionState('live captions · ~3s')},[queueWindow])
- const analyze=async(audio,duration)=>{setPhase('analyzing');const f=new FormData(),name=fileName(audio.type);f.append('audio',audio,name);f.append('fileName',name);f.append('transcript',finalText.current.trim());f.append('topicId',topic.id);f.append('topicTitle',topic.title);f.append('durationSec',String(duration));f.append('points',JSON.stringify(topic.points));try{const r=await fetch('/api/analyze',{method:'POST',body:f}),p=await r.json();if(!r.ok)throw new Error(p.error||'review unavailable');setResult(p);setPhase('results');window.scrollTo(0,0)}catch{setError('Peitho could not finish that review just now. Please try the session once more.');setPhase('brief');window.scrollTo(0,0)}}
+ const sendCaptionChunk=useCallback(async blob=>{
+   if(!blob?.size||phaseRef.current!=='session')return
+   setCaptionState('Preparing the next caption…')
+   try{
+     const f=new FormData();f.append('audio',blob,'live.wav');f.append('fileName','live.wav');f.append('glossary',glossary)
+     const r=await fetch('/api/live-transcribe',{method:'POST',body:f}),p=await r.json().catch(()=>({}))
+     if(!r.ok)throw new Error(p.error||'preview unavailable')
+     if(phaseRef.current!=='session')return
+     const segment=String(p.transcript||'').trim()
+     // Unlike the previous rolling 12-second windows, each nine-second segment
+     // contains NEW audio only. Never merge overlapping passages or echo context.
+     if(segment){
+       finalText.current=[finalText.current.trim(),segment].filter(Boolean).join(' ')
+       setText(finalText.current);setCaptionUpdates(n=>n+1)
+     }
+     setCaptionState('Live draft · ~9s');setCaptionError('')
+   }catch{
+     if(phaseRef.current==='session'){
+       setCaptionState('Preview paused')
+       setCaptionError('Live captions are temporarily unavailable. The original recording is still being saved and will be transcribed in full when you finish.')
+     }
+   }
+ },[glossary])
+ const queueWindow=useCallback(()=>{
+   const ctx=audioCtx.current;if(!ctx||!rolling.current.length)return
+   const snapshot=rolling.current.slice()
+   rolling.current=[];sinceSend.current=0
+   const blob=wavBlob(snapshot,ctx.sampleRate)
+   captionQueue.current=captionQueue.current.then(()=>sendCaptionChunk(blob)).catch(()=>{})
+ },[sendCaptionChunk])
+ const setupLiveAudio=useCallback(s=>{
+   const C=window.AudioContext||window.webkitAudioContext
+   if(!C)throw new Error('Live voice preview is not supported in this browser.')
+   const ctx=new C();audioCtx.current=ctx
+   const source=ctx.createMediaStreamSource(s);sourceNode.current=source
+   const analyser=ctx.createAnalyser();analyser.fftSize=256;source.connect(analyser)
+   const data=new Uint8Array(analyser.frequencyBinCount)
+   const draw=()=>{if(phaseRef.current!=='session')return;analyser.getByteFrequencyData(data);setMicLevel(Math.min(100,Math.round(data.reduce((a,b)=>a+b,0)/data.length*1.7)));meterRaf.current=requestAnimationFrame(draw)};draw()
+   const proc=ctx.createScriptProcessor?.(4096,1,1)
+   if(!proc)throw new Error('Live voice preview is not supported in this browser.')
+   processor.current=proc;const gain=ctx.createGain();silentGain.current=gain;gain.gain.value=0
+   proc.onaudioprocess=e=>{
+     if(phaseRef.current!=='session'||finishing.current)return
+     const input=e.inputBuffer.getChannelData(0),copy=new Float32Array(input.length)
+     copy.set(input);rolling.current.push(copy);sinceSend.current+=copy.length
+     if(sinceSend.current>=ctx.sampleRate*LIVE_REFRESH_SECONDS)queueWindow()
+   }
+   source.connect(proc);proc.connect(gain);gain.connect(ctx.destination)
+   setCaptionState('Live draft · ~9s')
+ },[queueWindow])
+ const transcribeFinal=async(audio,duration)=>{
+   if(!audio?.size){setError('Your recording is unavailable. Please record again.');setPhase('brief');return}
+   pendingAudio.current=audio;pendingDuration.current=duration
+   setError('');setDraftMeta(null);setPhase('transcribing');window.scrollTo(0,0)
+   const f=new FormData(),name=fileName(audio.type)
+   f.append('audio',audio,name);f.append('fileName',name);f.append('durationSec',String(duration));f.append('glossary',glossary)
+   try{
+     const r=await fetch('/api/transcribe-final',{method:'POST',body:f}),p=await r.json().catch(()=>({}))
+     if(!r.ok)throw new Error(p.error||'Full transcription unavailable')
+     if(!p.draftId||!p.transcript)throw new Error('Transcription came back empty')
+     setDraftMeta(p);setDraftText(p.transcript);setAudioUrl(URL.createObjectURL(audio))
+     setPhase('confirm');window.scrollTo(0,0)
+   }catch(e){
+     setError(e instanceof Error?e.message:'Full transcription failed; your recording is still available.')
+     setPhase('transcribe-error');window.scrollTo(0,0)
+   }
+ }
+ const analyze=async()=>{
+   if(!pendingAudio.current||!draftMeta?.draftId)return
+   if(draftText.trim().split(/\s+/).filter(Boolean).length<5){
+     setError('The confirmed transcript needs at least five spoken words.');return
+   }
+   setError('');setPhase('analyzing')
+   const audio=pendingAudio.current,f=new FormData(),name=fileName(audio.type)
+   f.append('audio',audio,name);f.append('fileName',name)
+   f.append('draftId',draftMeta.draftId);f.append('transcript',draftText.trim())
+   f.append('topicId',topic.id);f.append('topicTitle',topic.title)
+   f.append('durationSec',String(pendingDuration.current));f.append('points',JSON.stringify(topic.points))
+   try{
+     const r=await fetch('/api/analyze',{method:'POST',body:f}),p=await r.json().catch(()=>({}))
+     if(!r.ok)throw new Error(p.error||'review unavailable')
+     setResult(p);setPhase('results');window.scrollTo(0,0)
+   }catch(e){
+     setError(e instanceof Error?e.message:'Peitho could not finish the review. Your original recording is still available for another transcription attempt.')
+     setDraftMeta(null);setPhase('transcribe-error');window.scrollTo(0,0)
+   }
+ }
  const start=async()=>{setError('');setCaptionError('');setText('');setElapsed(0);setMicLevel(0);setCaptionUpdates(0);finalText.current='';chunks.current=[];rolling.current=[];rollingCount.current=0;sinceSend.current=0;captionQueue.current=Promise.resolve();finishing.current=false;if(!navigator.mediaDevices?.getUserMedia||typeof MediaRecorder==='undefined'){setError('This browser cannot start a microphone practice session.');return}try{const s=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});stream.current=s;const type=recorderType(),r=type?new MediaRecorder(s,{mimeType:type}):new MediaRecorder(s);r.ondataavailable=e=>{if(e.data?.size)chunks.current.push(e.data)};r.start(1000);mainRec.current=r;started.current=Date.now();phaseRef.current='session';setPhase('session');window.scrollTo(0,0);setupLiveAudio(s)}catch{cleanup();setError('Peitho could not start the microphone. Check browser microphone permission and try again.');setPhase('brief')}}
  const finish=async()=>{if(finishing.current||phaseRef.current!=='session')return;finishing.current=true;const duration=Math.max(1,Math.round((Date.now()-started.current)/1000));queueWindow(true);const r=mainRec.current;if(!r){cleanup();setError('Peitho lost the recording session. Please try again.');setPhase('brief');return}const blob=await new Promise(resolve=>{const done=()=>resolve(new Blob(chunks.current,{type:r.mimeType||recorderType()||'audio/webm'}));if(r.state==='inactive')done();else{r.addEventListener('stop',done,{once:true});r.stop()}});phaseRef.current='analyzing';cleanup();mainRec.current=null;finishing.current=false;if(!blob.size){setError('No voice recording was captured. Please try again.');setPhase('brief');return}await analyze(blob,duration)}
  const words=text.trim()?text.trim().split(/\s+/).length:0,fillers=(text.match(FILLER_RE)||[]).length,wpm=elapsed>4?Math.round(words/(elapsed/60)):0
