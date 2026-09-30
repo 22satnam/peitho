@@ -24,7 +24,7 @@ export const Route = createFileRoute('/api/live-transcribe')({
       if(mime==='audio/wav'&&wavRms(bytes)<0.0025)return Response.json({transcript:''},{headers:{'Cache-Control':'no-store'}})
       // Every chunk is independent. Prompting Whisper with earlier transcripts made it
       // carry forward invented phrases and repeat text across overlapping windows.
-      const glossary=String(form.get('glossary')||'').replace(/[\\r\\n]/g,' ').slice(0,160)
+      const glossary=String(form.get('glossary')||'').replace(/\s+/g,' ').slice(0,160)
       const audio=new Blob([bytes],{type:mime});const groq=new FormData()
       groq.append('file',audio,fileName);groq.append('model',process.env.GROQ_LIVE_STT_MODEL?.trim()||'whisper-large-v3')
       groq.append('language','en');groq.append('temperature','0');groq.append('response_format','json')
