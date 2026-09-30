@@ -1,7 +1,8 @@
 import type { AnalysisShape, PeithoMetrics, WordTimestamp } from './metrics'
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash'
-const GEMINI_AUDIO_FALLBACK_MODEL = process.env.GEMINI_AUDIO_FALLBACK_MODEL || 'gemini-3.7-flash'
+const GEMINI_AUDIO_FALLBACK_MODEL = process.env.GEMINI_AUDIO_FALLBACK_MODEL || 'gemini-3.5-flash-lite'
+const GEMINI_AUDIO_THIRD_MODEL = process.env.GEMINI_AUDIO_THIRD_MODEL || 'gemini-3.7-flash'
 const GROQ_FINAL_STT_MODEL = process.env.GROQ_FINAL_STT_MODEL?.trim() || 'whisper-large-v3'
 const GROQ_FALLBACK_MODEL = process.env.GROQ_FALLBACK_MODEL || 'openai/gpt-oss-120b'
 
@@ -147,18 +148,49 @@ export async function analyzeWithGemini(input:{transcript:string;topicTitle:stri
  try{
    const parts:Array<Record<string,unknown>>=[{text:prompt}]
    if(input.audio){uploaded=await uploadAudioToGemini(key,input.audio);parts.push({fileData:{mimeType:uploaded.mimeType,fileUri:uploaded.uri}})}
-   const models=[GEMINI_MODEL,GEMINI_AUDIO_FALLBACK_MODEL].filter((model,index,array)=>model&&array.indexOf(model)===index)
-   let lastError:Error|null=null
+   // Retain a single uploaded file across model attempts: repeated uploads increase
+   // latency and can overload Files API when generation is temporarily unavailable.
+   const models=[GEMINI_MODEL,GEMINI_AUDIO_FALLBACK_MODEL,GEMINI_AUDIO_THIRD_MODEL].filter((model,index,array)=>model&&array.indexOf(model)===index)
+   const failures:string[]=[]
    for(const model of models){
-     try{
-       const response=await geminiGenerateContent(key,parts,ANALYSIS_SCHEMA as unknown as Record<string,unknown>,model)
-       if(!response.ok)throw new Error(`Gemini ${model} failed (${response.status}): ${(await response.text()).slice(0,700)}`)
-       const payload=await response.json(),text=extractGenerateContentText(payload)
-       if(!text)throw new Error(`Gemini ${model} returned no text output`)
-       return parseJsonText(text)
-     }catch(error){lastError=error instanceof Error?error:new Error(String(error))}
+     const maxAttempts=model===GEMINI_AUDIO_FALLBACK_MODEL?2:1
+     for(let attempt=1;attempt<=maxAttempts;attempt++){
+       try{
+         const response=await geminiGenerateContent(key,parts,ANALYSIS_SCHEMA as unknown as Record<string,unknown>,model)
+         if(!response.ok){
+           const status=response.status
+           // A bad key, unsupported project or invalid schema is not solved by retrying.
+           if(status===401||status===403)throw new Error(`Gemini authorization failed (HTTP ${status}); verify the Gemini API key and project permissions`)
+           const responseText=await response.text()
+           const category=status===503?'high demand':status===429?'quota or rate limit':status===404?'model unavailable':status>=500?'service error':'request rejected'
+           failures.push(`${model} HTTP ${status} (${category})`)
+           if(attempt<maxAttempts && (status===429||status===408||status>=500)){
+             await new Promise(resolve=>setTimeout(resolve,1000+Math.floor(Math.random()*600)))
+             continue
+           }
+           // Try a different supported model if this one is overloaded or unavailable.
+           break
+         }
+         const payload=await response.json(),text=extractGenerateContentText(payload)
+         if(!text){
+           failures.push(`${model} empty output`)
+           break
+         }
+         try{return parseJsonText(text)}
+         catch{failures.push(`${model} invalid structured output`);break}
+       }catch(error){
+         const message=error instanceof Error?error.message:String(error)
+         if(message.includes('authorization failed'))throw error
+         failures.push(`${model} request error: ${message.slice(0,85)}`)
+         if(attempt<maxAttempts){
+           await new Promise(resolve=>setTimeout(resolve,1000+Math.floor(Math.random()*600)))
+           continue
+         }
+         break
+       }
+     }
    }
-   throw lastError||new Error('Gemini audio review failed')
+   throw new Error(`Gemini audio review exhausted models: ${failures.join('; ').slice(0,550)}`)
  }finally{if(uploaded)await deleteGeminiFile(key,uploaded.name)}
 }
 
