@@ -7,9 +7,6 @@ function liveMime(fileName: string, reported: string) {
   const clean = reported.toLowerCase().split(';')[0].trim()
   return clean.startsWith('audio/') ? clean : (map[ext] || 'audio/webm')
 }
-function cookieValue(request: Request, name: string) { const raw=request.headers.get('cookie')||''; const item=raw.split(';').map(x=>x.trim()).find(x=>x.startsWith(`${name}=`)); return item?item.slice(name.length+1):'' }
-function readContext(request: Request) { try { const raw=cookieValue(request,'peitho_live_ctx'); if(!raw)return''; const parsed=JSON.parse(decodeURIComponent(raw)); if(!parsed?.text||!parsed?.ts||Date.now()-Number(parsed.ts)>12_000)return''; return String(parsed.text).slice(-900) } catch{return''} }
-function contextCookie(text: string) { const value=encodeURIComponent(JSON.stringify({ts:Date.now(),text:text.slice(-900)})); return `peitho_live_ctx=${value}; Path=/; Max-Age=900; SameSite=Lax; Secure` }
 function wavRms(buffer: ArrayBuffer) { if(buffer.byteLength<48)return 1; const view=new DataView(buffer); let sum=0,count=0; for(let i=44;i+1<buffer.byteLength;i+=2){const sample=view.getInt16(i,true)/32768;sum+=sample*sample;count+=1} return count?Math.sqrt(sum/count):0 }
 
 export const Route = createFileRoute('/api/live-transcribe')({
@@ -24,13 +21,18 @@ export const Route = createFileRoute('/api/live-transcribe')({
       if(!(entry instanceof Blob)||!entry.size)return Response.json({error:'Audio chunk required.'},{status:400})
       if(entry.size>6*1024*1024)return Response.json({error:'Live audio chunk too large.'},{status:413})
       const bytes=await entry.arrayBuffer(); const mime=liveMime(fileName,entry.type)
-      if(mime==='audio/wav'&&wavRms(bytes)<0.0045)return Response.json({transcript:''},{headers:{'Cache-Control':'no-store'}})
-      const previous=readContext(request); const audio=new Blob([bytes],{type:mime}); const groq=new FormData()
-      groq.append('file',audio,fileName);groq.append('model',process.env.GROQ_LIVE_STT_MODEL?.trim()||'whisper-large-v3');groq.append('language','en');groq.append('temperature','0');groq.append('response_format','json');if(previous)groq.append('prompt',previous)
+      if(mime==='audio/wav'&&wavRms(bytes)<0.0025)return Response.json({transcript:''},{headers:{'Cache-Control':'no-store'}})
+      // Every chunk is independent. Prompting Whisper with earlier transcripts made it
+      // carry forward invented phrases and repeat text across overlapping windows.
+      const glossary=String(form.get('glossary')||'').replace(/[\\r\\n]/g,' ').slice(0,160)
+      const audio=new Blob([bytes],{type:mime});const groq=new FormData()
+      groq.append('file',audio,fileName);groq.append('model',process.env.GROQ_LIVE_STT_MODEL?.trim()||'whisper-large-v3')
+      groq.append('language','en');groq.append('temperature','0');groq.append('response_format','json')
+      if(glossary)groq.append('prompt',`Names and terms that might occur (include only if actually heard): ${glossary}`)
       const response=await fetch('https://api.groq.com/openai/v1/audio/transcriptions',{method:'POST',headers:{Authorization:`Bearer ${key}`},body:groq})
       if(!response.ok){const detail=await response.text();return Response.json({error:`Groq live transcription failed (${response.status}): ${detail.slice(0,350)}`},{status:response.status,headers:{'Cache-Control':'no-store'}})}
-      const payload:any=await response.json();const transcript=String(payload?.text||'').trim();const nextContext=`${previous} ${transcript}`.trim().slice(-900)
-      return Response.json({transcript},{headers:{'Cache-Control':'no-store','Set-Cookie':contextCookie(nextContext)}})
+      const payload:any=await response.json();const transcript=String(payload?.text||'').trim()
+      return Response.json({transcript},{headers:{'Cache-Control':'no-store'}})
     } catch(error) { return Response.json({error:error instanceof Error?error.message:'Live transcription failed.'},{status:500,headers:{'Cache-Control':'no-store'}}) }
   } } },
 })
