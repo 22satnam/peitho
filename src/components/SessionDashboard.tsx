@@ -9,6 +9,7 @@ export type SessionDashboardResult={
  performanceReport?:{score:number;categories:Array<{key:string;label:string;score:number|null;note:string;basis:'measured'|'voice'}>}
  sessionId?:string|null
  sessionSaved?:boolean
+ transcriptReviewed?:boolean
  degraded?:boolean
 }
 
@@ -43,6 +44,6 @@ export default function SessionDashboard({result}:{result:SessionDashboardResult
  <h3 className="pd-title">Three things to work on</h3><div className="pd-fixes">{(a.top_fixes||[]).slice(0,3).map((x,i)=><div className="pd-fix" key={i}><h4>{i+1}. {x.title}</h4><div className="pd-pair"><span className="k">You said</span><span className="said">“{x.you_said}”</span><span className="k">Try</span><span className="try">{x.try}</span></div></div>)}</div>
  <h3 className="pd-title">What Peitho noticed</h3><div className="pd-notes"><div className="pd-panel pd-note"><h4>Word choice</h4><p>{a.vocabulary?.note}</p></div><div className="pd-panel pd-note"><h4>Idea flow</h4><p>{a.coherence?.note}</p></div><div className="pd-panel pd-note"><h4>Delivery</h4><p>{delivery!=null?a.delivery?.note:'Peitho Lite focused this review on your transcript and measurable speaking patterns.'}</p></div><div className="pd-panel pd-note"><h4>Language evidence</h4><p>{a.grammar?.length||0} grammar findings · {a.l1_patterns?.length||0} high-confidence transfer patterns</p></div></div>
  {((a.grammar?.length||0)>0||(a.l1_patterns?.length||0)>0)&&<div className="pd-evidence"><h3 className="pd-title">Language patterns</h3>{(a.grammar||[]).map((x,i)=><div className="pattern" key={`g${i}`}><div>“{x.quote}”</div><div>{x.issue}</div><div>→ {x.fix}</div></div>)}{(a.l1_patterns||[]).map((x,i)=><div className="pattern" key={`l${i}`}><div>“{x.quote}”</div><div>{x.pattern}</div><div>→ {x.fix}</div></div>)}</div>}
- <details className="pd-transcript"><summary>View full transcript</summary><p>{result.transcript}</p></details>{result.degraded&&<div className="pd-lite"><strong>Peitho Lite completed this review.</strong> Your core coaching and measurable speaking insights are ready.</div>}
+ <details className="pd-transcript"><summary>View full transcript{result.transcriptReviewed?' · confirmed before scoring':''}</summary><p>{result.transcript}</p></details>{result.degraded&&<div className="pd-lite"><strong>Peitho Lite completed this review.</strong> Your core coaching and measurable speaking insights are ready.</div>}
  </section>
 }
