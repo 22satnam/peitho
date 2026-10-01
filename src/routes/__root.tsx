@@ -1,5 +1,6 @@
 import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
+import PeithoInsights from '../components/PeithoInsights'
 
 export const Route = createRootRoute({
   head: () => ({
@@ -29,6 +30,7 @@ function RootDocument({ children }: { children: ReactNode }) {
       </head>
       <body>
         {children}
+        <PeithoInsights />
         <Scripts />
       </body>
     </html>
