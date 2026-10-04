@@ -61,9 +61,10 @@ export function validateAnalysis(raw: AnalysisShape, transcript: string, metrics
 
   return {
     grammar,
+    grammar_score: Number.isFinite(Number(raw.grammar_score)) ? Math.max(0,Math.min(100,Math.round(Number(raw.grammar_score)))) : undefined,
     l1_patterns: l1Patterns,
-    vocabulary: { score: Number.isFinite(Number(raw.vocabulary?.score)) ? Number(raw.vocabulary?.score) : 60, note: String(raw.vocabulary?.note || 'Vocabulary analysis was unavailable for this run.') },
-    coherence: { score: Number.isFinite(Number(raw.coherence?.score)) ? Number(raw.coherence?.score) : 60, note: String(raw.coherence?.note || 'Coherence analysis was unavailable for this run.') },
+    vocabulary: { score: Number.isFinite(Number(raw.vocabulary?.score)) ? Math.max(0,Math.min(100,Math.round(Number(raw.vocabulary?.score)))) : 50, note: String(raw.vocabulary?.note || 'Vocabulary analysis was unavailable for this run.') },
+    coherence: { score: Number.isFinite(Number(raw.coherence?.score)) ? Math.max(0,Math.min(100,Math.round(Number(raw.coherence?.score)))) : 50, note: String(raw.coherence?.note || 'Coherence analysis was unavailable for this run.') },
     delivery: { score: Number.isFinite(Number(raw.delivery?.score)) ? Number(raw.delivery?.score) : 0, note: String(raw.delivery?.note || 'Audio unavailable — delivery was not scored.'), clarity_moments: clarityMoments, tonal_variation: voiceDimension(raw.delivery?.tonal_variation,'Tonal variation was not scored in this review.'), volume_projection: voiceDimension(raw.delivery?.volume_projection,'Voice projection was not scored in this review.'), enunciation: voiceDimension(raw.delivery?.enunciation,'Enunciation was not scored in this review.') },
     top_fixes: validFixes.slice(0, 3),
     encouragement: String(raw.encouragement || 'Run the same topic once more and make the first sentence of each point more direct.'),
@@ -72,9 +73,9 @@ export function validateAnalysis(raw: AnalysisShape, transcript: string, metrics
 
 export function deterministicOnlyAnalysis(transcript: string, metrics: PeithoMetrics): AnalysisShape {
   return {
-    grammar: [], l1_patterns: [],
-    vocabulary: { score: 60, note: 'Vocabulary analysis was unavailable for this review.' },
-    coherence: { score: 60, note: 'Idea-flow analysis was unavailable for this review.' },
+    grammar: [], grammar_score: 50, l1_patterns: [],
+    vocabulary: { score: 50, note: 'Vocabulary analysis was unavailable for this review.' },
+    coherence: { score: 50, note: 'Idea-flow analysis was unavailable for this review.' },
     delivery: { score: 0, note: 'Voice delivery was not scored in this review.', clarity_moments: [], tonal_variation:{score:0,note:'Tonal variation was not scored in this review.'}, volume_projection:{score:0,note:'Voice projection was not scored in this review.'}, enunciation:{score:0,note:'Enunciation was not scored in this review.'} },
     top_fixes: metricFixes(transcript, metrics),
     encouragement: 'Try the same topic once more and make the first sentence of each point more direct.',
