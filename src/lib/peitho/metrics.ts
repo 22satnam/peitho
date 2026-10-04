@@ -252,7 +252,7 @@ export function buildPracticePlan(
   scores:{fluency:number;grammar:number;vocabulary:number;coherence:number;overall:number},
   report:PerformanceReport,
 ):PracticePriority[]{
-  const perf=new Map(report.categories.filter(x=>x.score!=null).map(x=>[x.key,Number(x.score)]))
+  const perf=new Map(report.categories.filter(x=>x.score!=null).map(x=>[x.key,Number(x.score)] as const))
   const candidates:PracticePriority[]=[
     {key:'grammar',label:'Grammar control',score:scores.grammar,target:'85+ with only occasional construction errors',drill:'Repeat a 60-second answer using shorter complete clauses. Fix the specific grammar patterns Peitho flagged, then answer the same prompt again without scripting.'},
     {key:'fluency',label:'Fluency',score:scores.fluency,target:'85+ with controlled pace, fillers and silence',drill:'Do one 60-second run where you keep moving through the thought without restarting sentences. Use a short silent beat instead of a filler.'},
