@@ -210,13 +210,13 @@ function pausePerformance(metrics: PeithoMetrics) {
   return{score,note}
 }
 
-export function buildPerformanceReport(metrics: PeithoMetrics, analysis: AnalysisShape): PerformanceReport {
+export function buildPerformanceReport(metrics: PeithoMetrics, analysis: AnalysisShape, hasVoiceReview = false): PerformanceReport {
   const pacing = pacingPerformance(metrics)
   const filler = fillerPerformance(metrics)
   const pause = pausePerformance(metrics)
-  const tonal = optionalScore(analysis.delivery?.tonal_variation?.score)
-  const volume = optionalScore(analysis.delivery?.volume_projection?.score)
-  const enunciation = optionalScore(analysis.delivery?.enunciation?.score)
+  const tonal = hasVoiceReview ? clampScore(analysis.delivery?.tonal_variation?.score,0) : null
+  const volume = hasVoiceReview ? clampScore(analysis.delivery?.volume_projection?.score,0) : null
+  const enunciation = hasVoiceReview ? clampScore(analysis.delivery?.enunciation?.score,0) : null
 
   const categories: PerformanceCategory[] = [
     { key: 'pacing', label: 'Pacing', score: pacing.score, note: pacing.note, basis: 'measured' },
@@ -233,13 +233,13 @@ export function buildPerformanceReport(metrics: PeithoMetrics, analysis: Analysi
   return{score:Math.round(average*.75+weakest*.25),categories}
 }
 
-export function scoreSession(metrics: PeithoMetrics, analysis: AnalysisShape) {
+export function scoreSession(metrics: PeithoMetrics, analysis: AnalysisShape, hasVoiceReview = false) {
   const grammarIssueCount=analysis.grammar?.length??0
   const fluency=fluencyScore(metrics)
   const grammar=grammarScore(metrics,grammarIssueCount,analysis.grammar_score)
   const vocabulary=clampScore(analysis.vocabulary?.score,50)
   const coherence=clampScore(analysis.coherence?.score,50)
-  const delivery=optionalScore(analysis.delivery?.score)
+  const delivery=hasVoiceReview?clampScore(analysis.delivery?.score,0):null
   const overall=delivery==null
     ? Math.round(fluency*.32+grammar*.33+vocabulary*.15+coherence*.20)
     : Math.round(fluency*.22+grammar*.25+vocabulary*.13+coherence*.15+delivery*.25)
