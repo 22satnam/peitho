@@ -32,6 +32,7 @@ export type PeithoMetrics = {
 
 export type AnalysisShape = {
   grammar?: Array<{ quote?: string; issue?: string; fix?: string }>
+  grammar_score?: number
   l1_patterns?: Array<{ quote?: string; pattern?: string; fix?: string }>
   vocabulary?: { score?: number; note?: string }
   coherence?: { score?: number; note?: string }
@@ -93,7 +94,7 @@ export function pausesFromWords(words: WordTimestamp[]) {
   const pauses: number[] = []
   for (let i = 1; i < words.length; i += 1) {
     const gapSeconds = Math.max(0, Number(words[i].start) - Number(words[i - 1].end))
-    if (gapSeconds >= 2) pauses.push(Math.round(gapSeconds * 1000))
+    if (gapSeconds >= 1.5) pauses.push(Math.round(gapSeconds * 1000))
   }
   return pauses
 }
@@ -113,8 +114,10 @@ export function computeMetrics(input: {
   const normalizedWords = tokens.map((word) => word.toLowerCase().replace(/[^a-z']/g, '')).filter(Boolean)
   const unique = new Set(normalizedWords).size
   const timestampPauses = pausesFromWords(input.wordTimestamps ?? [])
-  const clientPauses = (input.clientPausesMs ?? []).filter((value) => Number.isFinite(value) && value >= 2000)
-  const pauses = timestampPauses.length ? timestampPauses : clientPauses
+  const clientPauses = (input.clientPausesMs ?? []).filter((value) => Number.isFinite(value) && value >= 1500)
+  // Browser audio-level pauses are preferred because ASR word timestamps can collapse
+  // or omit silence. Fall back to word gaps when client silence tracking is unavailable.
+  const pauses = clientPauses.length ? clientPauses : timestampPauses
 
   return {
     words: tokens.length,
@@ -131,17 +134,24 @@ export function computeMetrics(input: {
 }
 
 export function fluencyScore(metrics: PeithoMetrics) {
-  let score = 100
-  score -= Math.min(65, metrics.fillersPerMin * 2.4)
-  score -= Math.min(15, metrics.pauseCount * 3)
-  if (metrics.wpm < 110) score -= Math.min(15, (110 - metrics.wpm) * 0.4)
-  if (metrics.wpm > 175) score -= Math.min(12, (metrics.wpm - 175) * 0.3)
-  return Math.max(5, Math.round(score))
+  const mins=Math.max(metrics.durationSec/60,0.2)
+  const pausesPerMin=metrics.pauseCount/mins
+  let score=100
+  score-=Math.min(55,metrics.fillersPerMin*3.4)
+  score-=Math.min(38,pausesPerMin*8.5)
+  score-=Math.min(28,Math.max(0,metrics.longestPauseSec-2)*4.5)
+  if(metrics.wpm<110)score-=Math.min(28,(110-metrics.wpm)*.55)
+  if(metrics.wpm>175)score-=Math.min(24,(metrics.wpm-175)*.45)
+  return Math.max(0,Math.round(score))
 }
 
-export function grammarScore(metrics: PeithoMetrics, issueCount: number) {
-  if (!metrics.words) return 50
-  return Math.max(10, Math.round(100 - (issueCount / metrics.words) * 100 * 11))
+export function grammarScore(metrics: PeithoMetrics, issueCount: number, modelScore?: number) {
+  if(!metrics.words)return 40
+  const per100=(issueCount/metrics.words)*100
+  const evidenceScore=Math.max(5,Math.round(100-per100*15))
+  const ai=Number(modelScore)
+  if(!Number.isFinite(ai))return evidenceScore
+  return Math.max(0,Math.min(100,Math.min(evidenceScore,Math.round(ai))))
 }
 
 function clampScore(value: unknown, fallback = 60) {
@@ -172,7 +182,7 @@ function pacingPerformance(metrics: PeithoMetrics) {
 }
 
 function fillerPerformance(metrics: PeithoMetrics) {
-  const score = clampScore(100 - metrics.fillersPerMin * 3.7, 100)
+  const score = clampScore(100 - metrics.fillersPerMin * 5.2, 100)
   const note = metrics.fillers === 0
     ? 'No tracked filler words were detected in the final transcript.'
     : `${metrics.fillersPerMin} fillers/min · ${metrics.fillers} total. ${metrics.fillersPerMin > 8 ? 'Fillers are frequent enough to interrupt the flow of thought.' : metrics.fillersPerMin > 4 ? 'Some filler pressure is audible; replacing a few with short silent beats would make the delivery cleaner.' : 'Filler pressure is relatively light in this session.'}`
@@ -180,14 +190,15 @@ function fillerPerformance(metrics: PeithoMetrics) {
 }
 
 function pausePerformance(metrics: PeithoMetrics) {
-  const mins = Math.max(metrics.durationSec / 60, 0.25)
-  const pausesPerMin = metrics.pauseCount / mins
-  const excessLongest = Math.max(0, metrics.longestPauseSec - 3)
-  const score = clampScore(100 - pausesPerMin * 12 - excessLongest * 6, 100)
-  const note = metrics.pauseCount === 0
-    ? 'No pauses longer than two seconds were detected. The delivery stayed continuous.'
-    : `${metrics.pauseCount} long pause${metrics.pauseCount === 1 ? '' : 's'} · longest ${metrics.longestPauseSec}s. ${pausesPerMin > 2 ? 'The longer gaps break continuity; plan the next clause before finishing the current one.' : 'The longer pauses are occasional rather than dominant.'}`
-  return { score, note }
+  const mins=Math.max(metrics.durationSec/60,.2)
+  const pausesPerMin=metrics.pauseCount/mins
+  const durationPenalty=(metrics.pauses||[]).reduce((sum,ms)=>sum+Math.max(0,ms/1000-1.5)*5.5,0)
+  const longestPenalty=Math.max(0,metrics.longestPauseSec-3)*8
+  const score=clampScore(100-pausesPerMin*17-durationPenalty-longestPenalty,100)
+  const note=metrics.pauseCount===0
+    ? 'No silence gap of 1.5 seconds or longer was detected between spoken phrases.'
+    : `${metrics.pauseCount} long pause${metrics.pauseCount===1?'':'s'} · longest ${metrics.longestPauseSec}s. ${metrics.longestPauseSec>=5?'A very long gap materially interrupted the answer.':pausesPerMin>1.5?'Frequent longer gaps interrupt continuity and make the answer feel less prepared.':'The longer gaps were occasional but still measurable.'}`
+  return{score,note}
 }
 
 export function buildPerformanceReport(metrics: PeithoMetrics, analysis: AnalysisShape): PerformanceReport {
@@ -206,16 +217,22 @@ export function buildPerformanceReport(metrics: PeithoMetrics, analysis: Analysi
     { key: 'volume_projection', label: 'Volume & projection', score: volume, note: String(analysis.delivery?.volume_projection?.note || 'Voice projection was not scored in this review.'), basis: 'voice' },
     { key: 'enunciation', label: 'Enunciation', score: enunciation, note: String(analysis.delivery?.enunciation?.note || 'Enunciation was not scored in this review.'), basis: 'voice' },
   ]
-  const available = categories.map((item) => item.score).filter((value): value is number => value != null)
-  return { score: available.length ? Math.round(available.reduce((sum, value) => sum + value, 0) / available.length) : 0, categories }
+  const available=categories.map(item=>item.score).filter((value):value is number=>value!=null)
+  if(!available.length)return{score:0,categories}
+  const average=available.reduce((sum,value)=>sum+value,0)/available.length
+  const weakest=Math.min(...available)
+  return{score:Math.round(average*.75+weakest*.25),categories}
 }
 
 export function scoreSession(metrics: PeithoMetrics, analysis: AnalysisShape) {
-  const grammarIssueCount = analysis.grammar?.length ?? 0
-  const fluency = fluencyScore(metrics)
-  const grammar = grammarScore(metrics, grammarIssueCount)
-  const vocabulary = clampScore(analysis.vocabulary?.score)
-  const coherence = clampScore(analysis.coherence?.score)
-  const overall = Math.round(fluency * 0.35 + grammar * 0.3 + vocabulary * 0.15 + coherence * 0.2)
-  return { fluency, grammar, vocabulary, coherence, overall }
+  const grammarIssueCount=analysis.grammar?.length??0
+  const fluency=fluencyScore(metrics)
+  const grammar=grammarScore(metrics,grammarIssueCount,analysis.grammar_score)
+  const vocabulary=clampScore(analysis.vocabulary?.score,50)
+  const coherence=clampScore(analysis.coherence?.score,50)
+  const delivery=optionalScore(analysis.delivery?.score)
+  const overall=delivery==null
+    ? Math.round(fluency*.32+grammar*.33+vocabulary*.15+coherence*.20)
+    : Math.round(fluency*.22+grammar*.25+vocabulary*.13+coherence*.15+delivery*.25)
+  return{fluency,grammar,vocabulary,coherence,overall}
 }
