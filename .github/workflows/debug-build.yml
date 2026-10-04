@@ -1,0 +1,57 @@
+name: Peitho build diagnostics
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Capture build output
+        id: build
+        shell: bash
+        run: |
+          set +e
+          npm run build > build.log 2>&1
+          code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          {
+            echo 'log<<PEITHO_EOF'
+            tail -c 50000 build.log
+            echo
+            echo 'PEITHO_EOF'
+          } >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Publish compiler output
+        uses: actions/github-script@v7
+        env:
+          BUILD_CODE: ${{ steps.build.outputs.code }}
+          BUILD_LOG: ${{ steps.build.outputs.log }}
+        with:
+          script: |
+            const failed = process.env.BUILD_CODE !== '0'
+            const log = (process.env.BUILD_LOG || '').slice(-50000)
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'Peitho compiler diagnostics',
+              head_sha: context.sha,
+              status: 'completed',
+              conclusion: failed ? 'failure' : 'success',
+              output: {
+                title: failed ? 'Build failed' : 'Build passed',
+                summary: '### npm run build\n\n```text\n' + log + '\n```'
+              }
+            })
+            if (failed) core.setFailed('Build failed; see compiler diagnostics check.')
