@@ -40,7 +40,8 @@ export const ANALYSIS_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    grammar: { type: 'array', maxItems: 5, items: { type: 'object', additionalProperties: false, properties: { quote: { type: 'string' }, issue: { type: 'string' }, fix: { type: 'string' } }, required: ['quote', 'issue', 'fix'] } },
+    grammar: { type: 'array', maxItems: 8, items: { type: 'object', additionalProperties: false, properties: { quote: { type: 'string' }, issue: { type: 'string' }, fix: { type: 'string' } }, required: ['quote', 'issue', 'fix'] } },
+    grammar_score: { type: 'integer', minimum: 0, maximum: 100 },
     l1_patterns: { type: 'array', maxItems: 3, items: { type: 'object', additionalProperties: false, properties: { quote: { type: 'string' }, pattern: { type: 'string' }, fix: { type: 'string' } }, required: ['quote', 'pattern', 'fix'] } },
     vocabulary: { type: 'object', additionalProperties: false, properties: { score: { type: 'integer', minimum: 0, maximum: 100 }, note: { type: 'string' } }, required: ['score', 'note'] },
     coherence: { type: 'object', additionalProperties: false, properties: { score: { type: 'integer', minimum: 0, maximum: 100 }, note: { type: 'string' } }, required: ['score', 'note'] },
@@ -48,7 +49,7 @@ export const ANALYSIS_SCHEMA = {
     top_fixes: { type: 'array', minItems: 3, maxItems: 3, items: { type: 'object', additionalProperties: false, properties: { title: { type: 'string' }, you_said: { type: 'string' }, try: { type: 'string' } }, required: ['title', 'you_said', 'try'] } },
     encouragement: { type: 'string' },
   },
-  required: ['grammar', 'l1_patterns', 'vocabulary', 'coherence', 'delivery', 'top_fixes', 'encouragement'],
+  required: ['grammar', 'grammar_score', 'l1_patterns', 'vocabulary', 'coherence', 'delivery', 'top_fixes', 'encouragement'],
 } as const
 
 function env(name: 'GROQ_API_KEY' | 'GEMINI_API_KEY') { return process.env[name]?.trim() || '' }
@@ -64,6 +65,7 @@ For delivery.clarity_moments, return at most 3 moments and [] when there is no s
 - mumbled: articulation/volume causes syllables or word boundaries to blur.
 - possible_mispronunciation: use ONLY with high confidence when the intended word is evident and its spoken form materially harms intelligibility. Never use this for accent/dialect variation, names, technical terms, or a guess.
 Every clarity_moment.quote must be copied verbatim from the transcript. Use confidence=high for possible_mispronunciation. Prefer recognition_uncertain over accusing the speaker when the transcript itself may simply be wrong.
+Do not normalize scores toward 70. If the speaker intentionally performs badly, reflect that performance rather than rewarding basic intelligibility.
 Also score these three audio-only dimensions independently:
 - delivery.tonal_variation: 0-100 for purposeful variation in pitch/energy/emphasis. A calm voice is not automatically weak; penalize monotony only when emphasis stays too flat to help the listener.
 - delivery.volume_projection: 0-100 for audible, steady vocal energy at the microphone. Do not claim to know absolute room loudness or physical projection because microphone gain and distance can distort that. Judge consistency/audibility in this recording.
@@ -87,10 +89,23 @@ Rules:
 - Keep categories separate. Fillers, hesitation, repetition, pace and pauses are FLUENCY issues, not grammar or L1-transfer issues.
 - Grammar means a defensible spoken-English construction error. Do not report run-on sentences, comma splices, punctuation, capitalization, or sentence-boundary issues because ASR punctuation is not reliable.
 - Do not call a phrase a tense error when its verbs are grammatically compatible in context.
-- grammar: at most 5 high-value issues. Prefer fewer high-confidence findings over speculative ones. Use [] when there is no defensible correction.
+- grammar: list up to 8 defensible spoken-English errors when present. Do not stop at 1-2 examples if the same answer contains several real construction errors.
+- grammar_score: score overall grammatical control across the entire answer, not just the listed examples.
 - L1 transfer must be a defensible structural or lexical transfer pattern. Never infer L1 transfer merely from nationality, accent, fillers, hesitation, repetition, pace, or one ambiguous awkward phrase. If uncertain, omit it.
 - Never say generic filler use is evidence of Hindi-English or another L1 transfer.
 - l1_patterns: at most 3, and [] is a good result when there is no high-confidence evidence.
+- Score calibration is strict. Use the full 0-100 range instead of clustering around 70.
+  * 90-100 = exceptional: consistently controlled with almost no meaningful weakness.
+  * 80-89 = strong: only minor, occasional issues.
+  * 70-79 = competent but clearly improvable; noticeable weaknesses are present.
+  * 60-69 = developing: recurring weaknesses affect quality.
+  * 40-59 = weak: frequent issues materially affect clarity/control.
+  * 0-39 = severe: persistent breakdowns or very limited control.
+- Never give 80+ simply because the response is understandable. Deliberate stress-test behavior such as repeated grammar mistakes, long hesitation, monotone delivery, blurred articulation or very weak structure should score accordingly.
+- For tonal_variation, sustained monotony with little useful emphasis should usually be below 60; 80+ requires clearly purposeful variation.
+- For volume_projection, repeated low/unstable audibility should usually be below 60; 80+ requires consistently clear vocal energy at the microphone.
+- For enunciation, repeated blurred word boundaries or frequent unintelligibility should usually be below 60; 80+ requires consistently distinct articulation. Accent alone is never a penalty.
+- delivery.score should summarize the actual audio and should be low when several delivery dimensions are low, even if the transcript content is understandable.
 - vocabulary: always include score and a specific note grounded in actual word choices. Do not double-penalize filler frequency here.
 - coherence: always include score and a specific note explaining whether the speaker answered the topic and connected claims, evidence and outcome.
 - top_fixes: exactly 3. Prioritize the three most useful changes across fluency, grammar, vocabulary, coherence and high-confidence delivery evidence without duplicating one problem across categories.
