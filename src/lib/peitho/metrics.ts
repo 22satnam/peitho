@@ -36,6 +36,7 @@ export type AnalysisShape = {
   l1_patterns?: Array<{ quote?: string; pattern?: string; fix?: string }>
   vocabulary?: { score?: number; note?: string }
   coherence?: { score?: number; note?: string }
+  message?: { score?: number; note?: string; understood_message?: string; key_points?: string[]; stronger_structure?: string[]; paraphrase?: string }
   delivery?: {
     score?: number
     note?: string
@@ -233,29 +234,41 @@ export function buildPerformanceReport(metrics: PeithoMetrics, analysis: Analysi
   return{score:Math.round(average*.75+weakest*.25),categories}
 }
 
-export function scoreSession(metrics: PeithoMetrics, analysis: AnalysisShape, hasVoiceReview = false) {
+export function scoreSession(metrics: PeithoMetrics, analysis: AnalysisShape, hasVoiceReview = false, hasSemanticReview = true) {
   const grammarIssueCount=analysis.grammar?.length??0
   const fluency=fluencyScore(metrics)
   const grammar=grammarScore(metrics,grammarIssueCount,analysis.grammar_score)
   const vocabulary=clampScore(analysis.vocabulary?.score,50)
   const coherence=clampScore(analysis.coherence?.score,50)
+  const message=hasSemanticReview?clampScore(analysis.message?.score,0):0
   const delivery=hasVoiceReview?clampScore(analysis.delivery?.score,0):null
-  const overall=delivery==null
-    ? Math.round(fluency*.32+grammar*.33+vocabulary*.15+coherence*.20)
-    : Math.round(fluency*.22+grammar*.25+vocabulary*.13+coherence*.15+delivery*.25)
-  return{fluency,grammar,vocabulary,coherence,overall}
+  let overall=delivery==null
+    ? hasSemanticReview
+      ? Math.round(fluency*.20+grammar*.20+vocabulary*.10+coherence*.15+message*.35)
+      : Math.round(fluency*.32+grammar*.33+vocabulary*.15+coherence*.20)
+    : hasSemanticReview
+      ? Math.round(fluency*.15+grammar*.17+vocabulary*.08+coherence*.10+message*.25+delivery*.25)
+      : Math.round(fluency*.22+grammar*.25+vocabulary*.13+coherence*.15+delivery*.25)
+  if(hasSemanticReview){
+    if(message<20)overall=Math.min(overall,30)
+    else if(message<35)overall=Math.min(overall,45)
+    else if(message<50)overall=Math.min(overall,59)
+    else if(message<65)overall=Math.min(overall,72)
+  }
+  return{fluency,grammar,vocabulary,coherence,message,overall}
 }
 
 
 export function buildPracticePlan(
   metrics:PeithoMetrics,
-  scores:{fluency:number;grammar:number;vocabulary:number;coherence:number;overall:number},
+  scores:{fluency:number;grammar:number;vocabulary:number;coherence:number;message:number;overall:number},
   report:PerformanceReport,
 ):PracticePriority[]{
   const perf=new Map(report.categories.filter(x=>x.score!=null).map(x=>[x.key,Number(x.score)] as const))
   const candidates:PracticePriority[]=[
     {key:'grammar',label:'Grammar control',score:scores.grammar,target:'85+ with only occasional construction errors',drill:'Repeat a 60-second answer using shorter complete clauses. Fix the specific grammar patterns Peitho flagged, then answer the same prompt again without scripting.'},
     {key:'fluency',label:'Fluency',score:scores.fluency,target:'85+ with controlled pace, fillers and silence',drill:'Do one 60-second run where you keep moving through the thought without restarting sentences. Use a short silent beat instead of a filler.'},
+    {key:'message',label:'Meaning & relevance',score:scores.message,target:'85+ with a clear answer, meaningful claims and relevant support',drill:'Before speaking, decide the one thing you want the listener to understand. Build the answer around 2–3 concrete points that directly support that message; remove sentences that do not add meaning.'},
     {key:'coherence',label:'Structure & coherence',score:scores.coherence,target:'85+ with point → evidence → outcome',drill:'Answer each prompt in three moves: state the point in one sentence, give one concrete example, then land why it matters.'},
     {key:'vocabulary',label:'Word choice',score:scores.vocabulary,target:'80+ with precise, varied wording',drill:'Repeat the same answer and replace three vague or repeated words with more precise nouns and verbs while keeping the sentence natural.'},
     {key:'pacing',label:'Pacing',score:perf.get('pacing')??100,target:'125–165 WPM for most conversational answers',drill:`Run the same answer again at a steady conversational tempo. Your last measured pace was ${metrics.wpm} WPM; slow down only at important claims, not between every phrase.`},
@@ -265,7 +278,7 @@ export function buildPracticePlan(
     {key:'volume_projection',label:'Volume & projection',score:perf.get('volume_projection')??100,target:'85+ with steady, clearly audible vocal energy',drill:'Record one short answer at a consistent mic distance. Keep vocal energy steady through sentence endings instead of fading out.'},
     {key:'enunciation',label:'Enunciation',score:perf.get('enunciation')??100,target:'85+ with consistently distinct word boundaries',drill:'Choose two difficult sentences from the transcript. Say them slowly once, then again at normal pace while keeping consonants and word endings distinct.'},
   ]
-  const targets:Record<string,number>={grammar:85,fluency:85,coherence:85,vocabulary:80,pacing:85,filler_control:90,pause_control:85,tonal_variation:85,volume_projection:85,enunciation:85}
+  const targets:Record<string,number>={message:85,grammar:85,fluency:85,coherence:85,vocabulary:80,pacing:85,filler_control:90,pause_control:85,tonal_variation:85,volume_projection:85,enunciation:85}
   return candidates
     .map(item=>({...item,gap:(targets[item.key]??85)-item.score}))
     .filter(item=>item.gap>0)
