@@ -45,11 +45,24 @@ export const ANALYSIS_SCHEMA = {
     l1_patterns: { type: 'array', maxItems: 3, items: { type: 'object', additionalProperties: false, properties: { quote: { type: 'string' }, pattern: { type: 'string' }, fix: { type: 'string' } }, required: ['quote', 'pattern', 'fix'] } },
     vocabulary: { type: 'object', additionalProperties: false, properties: { score: { type: 'integer', minimum: 0, maximum: 100 }, note: { type: 'string' } }, required: ['score', 'note'] },
     coherence: { type: 'object', additionalProperties: false, properties: { score: { type: 'integer', minimum: 0, maximum: 100 }, note: { type: 'string' } }, required: ['score', 'note'] },
+    message: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        score: { type: 'integer', minimum: 0, maximum: 100 },
+        note: { type: 'string' },
+        understood_message: { type: 'string' },
+        key_points: { type: 'array', maxItems: 4, items: { type: 'string' } },
+        stronger_structure: { type: 'array', minItems: 3, maxItems: 4, items: { type: 'string' } },
+        paraphrase: { type: 'string' },
+      },
+      required: ['score','note','understood_message','key_points','stronger_structure','paraphrase'],
+    },
     delivery: { type: 'object', additionalProperties: false, properties: { score: { type: 'integer', minimum: 0, maximum: 100 }, note: { type: 'string' }, clarity_moments: { type:'array', maxItems:3, items:CLARITY_MOMENT_SCHEMA }, tonal_variation: VOICE_DIMENSION_SCHEMA, volume_projection: VOICE_DIMENSION_SCHEMA, enunciation: VOICE_DIMENSION_SCHEMA }, required: ['score', 'note', 'clarity_moments', 'tonal_variation', 'volume_projection', 'enunciation'] },
     top_fixes: { type: 'array', minItems: 3, maxItems: 3, items: { type: 'object', additionalProperties: false, properties: { title: { type: 'string' }, you_said: { type: 'string' }, try: { type: 'string' } }, required: ['title', 'you_said', 'try'] } },
     encouragement: { type: 'string' },
   },
-  required: ['grammar', 'grammar_score', 'l1_patterns', 'vocabulary', 'coherence', 'delivery', 'top_fixes', 'encouragement'],
+  required: ['grammar', 'grammar_score', 'l1_patterns', 'vocabulary', 'coherence', 'message', 'delivery', 'top_fixes', 'encouragement'],
 } as const
 
 function env(name: 'GROQ_API_KEY' | 'GEMINI_API_KEY') { return process.env[name]?.trim() || '' }
@@ -65,6 +78,7 @@ For delivery.clarity_moments, return at most 3 moments and [] when there is no s
 - mumbled: articulation/volume causes syllables or word boundaries to blur.
 - possible_mispronunciation: use ONLY with high confidence when the intended word is evident and its spoken form materially harms intelligibility. Never use this for accent/dialect variation, names, technical terms, or a guess.
 Every clarity_moment.quote must be copied verbatim from the transcript. Use confidence=high for possible_mispronunciation. Prefer recognition_uncertain over accusing the speaker when the transcript itself may simply be wrong.
+For meaning/relevance, use the AUDIO as the primary evidence when audio is available and the transcript as a secondary aid. Do not punish the speaker for a phrase that is clearly an ASR error when the audio conveys something coherent.
 Do not normalize scores toward 70. If the speaker intentionally performs badly, reflect that performance rather than rewarding basic intelligibility.
 Also score these three audio-only dimensions independently:
 - delivery.tonal_variation: 0-100 for purposeful variation in pitch/energy/emphasis. A calm voice is not automatically weak; penalize monotony only when emphasis stays too flat to help the listener.
@@ -108,6 +122,19 @@ Rules:
 - delivery.score should summarize the actual audio and should be low when several delivery dimensions are low, even if the transcript content is understandable.
 - vocabulary: always include score and a specific note grounded in actual word choices. Do not double-penalize filler frequency here.
 - coherence: always include score and a specific note explaining whether the speaker answered the topic and connected claims, evidence and outcome.
+- message: judge whether the answer actually MEANS something. Evaluate topic relevance, semantic coherence, informational substance, and whether the speaker makes understandable propositions rather than merely producing grammatical sentences.
+- message.score calibration:
+  * 90-100 = directly answers the prompt with clear, meaningful claims and relevant support.
+  * 75-89 = mostly meaningful and relevant, with some vagueness, repetition or underdeveloped support.
+  * 60-74 = understandable core idea but substantial generic, disconnected or weakly supported content.
+  * 40-59 = partial meaning only; many vague, repetitive, off-topic or poorly connected statements.
+  * 20-39 = mostly disconnected claims, contradictions, empty repetition or word-salad-like content.
+  * 0-19 = little defensible meaning or relevance can be recovered from the response.
+- Correct grammar must NOT rescue meaningless content. A grammatically clean answer made of unrelated, nonsensical or empty claims should still receive a very low message.score.
+- message.understood_message: in 1-2 sentences, state the defensible core meaning Peitho understood. If there is not enough coherent meaning, say so plainly instead of inventing one.
+- message.key_points: 1-4 short bullets containing only substantive ideas actually supported by the response. Do not manufacture facts to make the speaker sound better.
+- message.stronger_structure: 3-4 concise bullets showing a clearer order for the SAME ideas. Reorder and compress; do not introduce new claims.
+- message.paraphrase: provide one concise, polished version that preserves only the speaker's defensible meaning. Never add facts, achievements, examples or opinions the speaker did not express. If there is too little coherent content to paraphrase safely, say "There was not enough coherent content to paraphrase without inventing meaning."
 - top_fixes: exactly 3. Prioritize the three most useful changes across fluency, grammar, vocabulary, coherence and high-confidence delivery evidence without duplicating one problem across categories.
 - encouragement: one honest, specific sentence, no generic praise.
 - Do not invent words the speaker did not say. If a phrase appears semantically bizarre or likely to be an ASR mistake, mark it only as recognition_uncertain when audio supports that, and do not build grammar/L1 criticism around it.`
