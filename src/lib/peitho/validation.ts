@@ -33,6 +33,8 @@ function voiceDimension(value:any, fallbackNote:string) {
   }
 }
 
+function cleanTextArray(value:unknown,max=4){return (Array.isArray(value)?value:[]).map(item=>String(item||'').trim()).filter(Boolean).slice(0,max)}
+
 function sentenceSamples(transcript: string) {
   const samples = transcript.split(/(?<=[.!?])\s+/).map((value) => value.trim()).filter(Boolean)
   if (samples.length >= 3) return samples.slice(0, 3)
@@ -65,6 +67,7 @@ export function validateAnalysis(raw: AnalysisShape, transcript: string, metrics
     l1_patterns: l1Patterns,
     vocabulary: { score: Number.isFinite(Number(raw.vocabulary?.score)) ? Math.max(0,Math.min(100,Math.round(Number(raw.vocabulary?.score)))) : 50, note: String(raw.vocabulary?.note || 'Vocabulary analysis was unavailable for this run.') },
     coherence: { score: Number.isFinite(Number(raw.coherence?.score)) ? Math.max(0,Math.min(100,Math.round(Number(raw.coherence?.score)))) : 50, note: String(raw.coherence?.note || 'Coherence analysis was unavailable for this run.') },
+    message: { score: Number.isFinite(Number(raw.message?.score)) ? Math.max(0,Math.min(100,Math.round(Number(raw.message?.score)))) : 0, note: String(raw.message?.note || 'Message quality was unavailable for this run.'), understood_message: String(raw.message?.understood_message || ''), key_points: cleanTextArray(raw.message?.key_points,4), stronger_structure: cleanTextArray(raw.message?.stronger_structure,4), paraphrase: String(raw.message?.paraphrase || '') },
     delivery: { score: Number.isFinite(Number(raw.delivery?.score)) ? Number(raw.delivery?.score) : 0, note: String(raw.delivery?.note || 'Audio unavailable — delivery was not scored.'), clarity_moments: clarityMoments, tonal_variation: voiceDimension(raw.delivery?.tonal_variation,'Tonal variation was not scored in this review.'), volume_projection: voiceDimension(raw.delivery?.volume_projection,'Voice projection was not scored in this review.'), enunciation: voiceDimension(raw.delivery?.enunciation,'Enunciation was not scored in this review.') },
     top_fixes: validFixes.slice(0, 3),
     encouragement: String(raw.encouragement || 'Run the same topic once more and make the first sentence of each point more direct.'),
@@ -76,6 +79,7 @@ export function deterministicOnlyAnalysis(transcript: string, metrics: PeithoMet
     grammar: [], grammar_score: 50, l1_patterns: [],
     vocabulary: { score: 50, note: 'Vocabulary analysis was unavailable for this review.' },
     coherence: { score: 50, note: 'Idea-flow analysis was unavailable for this review.' },
+    message: { score: 0, note: 'Meaning and relevance were not scored in this review.', understood_message:'', key_points:[], stronger_structure:[], paraphrase:'' },
     delivery: { score: 0, note: 'Voice delivery was not scored in this review.', clarity_moments: [], tonal_variation:{score:0,note:'Tonal variation was not scored in this review.'}, volume_projection:{score:0,note:'Voice projection was not scored in this review.'}, enunciation:{score:0,note:'Enunciation was not scored in this review.'} },
     top_fixes: metricFixes(transcript, metrics),
     encouragement: 'Try the same topic once more and make the first sentence of each point more direct.',
